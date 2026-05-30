@@ -53,6 +53,36 @@ const ROTATION_SEED: u64 = 42;
 const BLOCK: usize = 32;
 const FLUSH_EVERY: usize = 256;
 
+/// Maximum permitted coordinate magnitude. Beyond this, f32 sum-of-
+/// squares in the norm computation can overflow to +Inf for any
+/// reasonable dim (sqrt(f32::MAX / dim) for dim=2^16 is ~7e16; this
+/// bound leaves a 7x safety margin and is still ~16 orders of
+/// magnitude above any realistic embedding value).
+const MAX_INPUT_MAGNITUDE: f32 = 1e16;
+
+/// Reject non-finite (NaN, +Inf, -Inf) or extremely-large input values.
+/// Returns the first offending vector/coord/value tuple, or `None` if
+/// the input is clean.
+///
+/// Called from `add` / `add_2d` / `search` / `search_with_mask`. Without
+/// this check the encode pipeline silently corrupts the index:
+///   - NaN: `0 * NaN = NaN` poisons `vec_scales[slot]`, so the slot
+///     exists in `len()` but is never reachable through search.
+///   - Inf: same path via `1/Inf = 0`.
+///   - Huge magnitude: `simd_norm`'s f32 sum-of-squares overflows to
+///     +Inf, `scale[i] = Inf` gets stored, slot incorrectly wins
+///     top-k against every query.
+fn first_invalid_coord(values: &[f32], dim: usize) -> Option<(usize, usize, f32)> {
+    for (i, x) in values.iter().enumerate() {
+        if !x.is_finite() || x.abs() >= MAX_INPUT_MAGNITUDE {
+            let vector_index = if dim == 0 { 0 } else { i / dim };
+            let coord_index = if dim == 0 { i } else { i % dim };
+            return Some((vector_index, coord_index, *x));
+        }
+    }
+    None
+}
+
 /// SIMD-blocked cache derived from `packed_codes`.
 ///
 /// Materialised lazily by [`TurboQuantIndex::search`] on first call
@@ -174,7 +204,20 @@ impl TurboQuantIndex {
     }
 
     /// Add a flat batch of vectors. `dim` must be set (either eagerly at
-    /// construction or by a prior [`Self::add_2d`] call). Panics otherwise.
+    /// construction or by a prior [`Self::add_2d`] call).
+    ///
+    /// `vectors.len()` must be a multiple of `dim`; an empty input is a
+    /// no-op.
+    ///
+    /// # Panics
+    ///
+    /// - If `dim` is not set (call [`Self::new_lazy`] then [`Self::add_2d`]
+    ///   instead).
+    /// - If `vectors.len()` is not a multiple of `dim`.
+    /// - If any coordinate is non-finite (NaN, +Inf, -Inf) or has
+    ///   magnitude `>= 1e16`. Callers handling untrusted input should
+    ///   prefer [`Self::add_2d`], which returns a typed
+    ///   [`AddError::InvalidInputValue`] instead.
     pub fn add(&mut self, vectors: &[f32]) {
         let dim = self.dim.expect(
             "TurboQuantIndex dim is not set; use add_2d(vectors, dim) on the \
@@ -186,6 +229,23 @@ impl TurboQuantIndex {
             n * dim,
             "vectors length must be a multiple of dim"
         );
+        // Empty add is a true no-op — return before touching calibration
+        // or caches. Previously, an empty first add hit the
+        // `n < TQPLUS_MIN_SAMPLES` branch in `encode`, returned identity
+        // calibration, and locked `tqplus_shift` to that identity for the
+        // lifetime of the index. Every subsequent add — even a million
+        // vectors — then saw `Some(identity)` and silently skipped
+        // fitting fresh calibration. The user lost TQ+ entirely with no
+        // warning.
+        if n == 0 {
+            return;
+        }
+        if let Some((vi, ci, v)) = first_invalid_coord(vectors, dim) {
+            panic!(
+                "invalid input value at vector {vi}, coord {ci}: {v} \
+                 (must be finite and |value| < 1e16 to avoid f32 norm overflow)",
+            );
+        }
 
         let rotation = self
             .rotation
@@ -249,9 +309,19 @@ impl TurboQuantIndex {
     /// Python binding receiving a 2D numpy array) should use, since a
     /// flat `&[f32]` alone is ambiguous about its shape.
     ///
-    /// Returns [`AddError::DimMismatch`] if `dim` does not match the
-    /// already-locked dim, and [`AddError::DimNotMultipleOf8`] when
-    /// committing a lazy index to a dim that is not a multiple of 8.
+    /// Returns:
+    /// - [`AddError::DimMismatch`] if `dim` does not match the
+    ///   already-locked dim.
+    /// - [`AddError::DimNotMultipleOf8`] when committing a lazy index
+    ///   to a dim that is not a multiple of 8.
+    /// - [`AddError::InvalidInputValue`] if any coordinate is non-finite
+    ///   or has magnitude `>= 1e16`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `vectors.len()` is not a multiple of `dim`. (This
+    /// indicates a caller-side bug rather than recoverable bad data, so
+    /// it isn't returned as a typed error.)
     pub fn add_2d(&mut self, vectors: &[f32], dim: usize) -> Result<(), AddError> {
         match self.dim {
             Some(existing) if existing != dim => {
@@ -262,8 +332,23 @@ impl TurboQuantIndex {
                 if dim % 8 != 0 {
                     return Err(AddError::DimNotMultipleOf8(dim));
                 }
-                self.dim = Some(dim);
+                // Don't commit dim until value validation passes — otherwise
+                // a lazy index is left with a committed dim and no vectors,
+                // which would let a follow-up wrong-dim add see a confusing
+                // DimMismatch instead of a fresh start.
             }
+        }
+        if let Some((vi, ci, v)) = first_invalid_coord(vectors, dim) {
+            return Err(AddError::InvalidInputValue {
+                vector_index: vi,
+                coord_index: ci,
+                value: v,
+            });
+        }
+        // Lazy commit happens via add() (which goes through `self.dim.expect`),
+        // so re-do the dim assignment here for the lazy-first-add case.
+        if self.dim.is_none() {
+            self.dim = Some(dim);
         }
         self.add(vectors);
         Ok(())
@@ -280,6 +365,13 @@ impl TurboQuantIndex {
     /// Call [`TurboQuantIndex::prepare`] once after `add`/`load` to
     /// pay that cost up front if you want deterministic first-query
     /// latency.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `queries.len()` is not a multiple of `dim`, or if any
+    /// query coordinate is non-finite (NaN, +Inf, -Inf) or has
+    /// magnitude `>= 1e16`. Validate untrusted input at the caller
+    /// (e.g. the Python binding raises `ValueError`).
     pub fn search(&self, queries: &[f32], k: usize) -> SearchResults {
         self.search_with_mask(queries, k, None)
     }
@@ -292,6 +384,12 @@ impl TurboQuantIndex {
     /// `n_allowed` is the number of `true` entries in `mask`.
     ///
     /// Passing `mask = None` is equivalent to [`Self::search`].
+    ///
+    /// # Panics
+    ///
+    /// - If `mask.len() != self.len()` (when `mask` is `Some`).
+    /// - If `queries.len()` is not a multiple of `dim`.
+    /// - If any query coordinate is non-finite or has magnitude `>= 1e16`.
     pub fn search_with_mask(
         &self,
         queries: &[f32],
@@ -312,6 +410,16 @@ impl TurboQuantIndex {
         };
         let nq = queries.len() / dim;
         assert_eq!(queries.len(), nq * dim);
+        // Reject non-finite / huge-magnitude queries. Same rationale as
+        // `add`: NaN / Inf / overflow-magnitude values poison the SIMD
+        // scoring kernel and produce arbitrary indices with NaN scores,
+        // silently rather than as a typed error.
+        if let Some((vi, ci, v)) = first_invalid_coord(queries, dim) {
+            panic!(
+                "invalid query value at query {vi}, coord {ci}: {v} \
+                 (must be finite and |value| < 1e16 to avoid f32 overflow)",
+            );
+        }
 
         let rotation = self
             .rotation
@@ -442,6 +550,85 @@ impl TurboQuantIndex {
         tqplus_shift: Vec<f32>,
         tqplus_scale: Vec<f32>,
     ) -> Self {
+        // Structural invariants every caller must uphold. `from_parts` is
+        // pub(crate); today the only callers are `io::load` and
+        // `id_map::load`, both of which validate at the read layer — but
+        // pinning the invariants here makes future callers (and refactors
+        // of the existing ones) safe by construction.
+        assert_eq!(
+            tqplus_shift.len(),
+            tqplus_scale.len(),
+            "from_parts: tqplus_shift.len()={} != tqplus_scale.len()={}",
+            tqplus_shift.len(),
+            tqplus_scale.len(),
+        );
+        match dim {
+            Some(d) => {
+                let expected_packed = n_vectors * d * bit_width / 8;
+                assert_eq!(
+                    packed_codes.len(),
+                    expected_packed,
+                    "from_parts: packed_codes.len()={} != n_vectors({}) * dim({}) * bit_width({}) / 8 = {}",
+                    packed_codes.len(),
+                    n_vectors,
+                    d,
+                    bit_width,
+                    expected_packed,
+                );
+                assert_eq!(
+                    scales.len(),
+                    n_vectors,
+                    "from_parts: scales.len()={} != n_vectors={}",
+                    scales.len(),
+                    n_vectors,
+                );
+                if !tqplus_shift.is_empty() {
+                    assert_eq!(
+                        tqplus_shift.len(),
+                        d,
+                        "from_parts: non-empty TQ+ length {} must equal dim {}",
+                        tqplus_shift.len(),
+                        d,
+                    );
+                }
+            }
+            None => {
+                // Lazy uncommitted state — every storage field must be empty.
+                assert_eq!(n_vectors, 0, "from_parts: lazy index must have n_vectors=0");
+                assert!(
+                    packed_codes.is_empty(),
+                    "from_parts: lazy index must have empty packed_codes",
+                );
+                assert!(scales.is_empty(), "from_parts: lazy index must have empty scales");
+                assert!(
+                    tqplus_shift.is_empty(),
+                    "from_parts: lazy index must have empty tqplus_shift",
+                );
+            }
+        }
+
+        // v2 files (pre-TQ+) load with empty TQ+ vectors and a positive
+        // n_vectors. If we leave `tqplus_shift` empty, the next `add()`
+        // would see `existing = None` (the lazy-first-add signal),
+        // call `encode()` with `existing = None`, get a fresh fitted
+        // calibration back — and then silently drop it because
+        // `n_vectors != 0` takes the else branch that only extends
+        // `packed_codes` / `scales`. The new vectors would be encoded
+        // with that fitted calibration but searched against identity,
+        // producing silently-wrong scores.
+        //
+        // Populate explicit identity here so the "is the calibration
+        // committed?" check always agrees with the actual state of the
+        // stored vectors.
+        let (tqplus_shift, tqplus_scale) = if tqplus_shift.is_empty() && n_vectors > 0 {
+            let d = dim.expect(
+                "from_parts: n_vectors > 0 implies a committed dim — \
+                 mismatch indicates a corrupted side-car or a misuse",
+            );
+            (vec![0.0; d], vec![1.0; d])
+        } else {
+            (tqplus_shift, tqplus_scale)
+        };
         Self {
             dim,
             bit_width,
@@ -543,5 +730,123 @@ impl TurboQuantIndex {
 
     pub fn bit_width(&self) -> usize {
         self.bit_width
+    }
+}
+
+#[cfg(test)]
+mod from_parts_tests {
+    //! Unit tests for `TurboQuantIndex::from_parts` length-invariant
+    //! checks. `from_parts` is `pub(crate)`, so these live inside the
+    //! crate; the assertions catch any future caller (or refactor of
+    //! the existing `io::load` callers) that hands in a malformed
+    //! tuple of fields.
+
+    use super::TurboQuantIndex;
+
+    #[test]
+    #[should_panic(expected = "packed_codes.len()")]
+    fn from_parts_panics_on_packed_codes_length_mismatch() {
+        // Expected packed_codes length for dim=64, bit_width=4, n=2 is
+        // 2 * 64 * 4 / 8 = 64 bytes. Pass 32 to trigger the assert.
+        let _ = TurboQuantIndex::from_parts(
+            Some(64),
+            4,
+            2,
+            vec![0u8; 32],
+            vec![1.0f32; 2],
+            Vec::new(),
+            Vec::new(),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "scales.len()")]
+    fn from_parts_panics_on_scales_length_mismatch() {
+        let _ = TurboQuantIndex::from_parts(
+            Some(64),
+            4,
+            2,
+            vec![0u8; 64],
+            vec![1.0f32; 5],  // n_vectors says 2; scales has 5
+            Vec::new(),
+            Vec::new(),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "tqplus_shift.len()")]
+    fn from_parts_panics_on_mismatched_tqplus_lengths() {
+        let _ = TurboQuantIndex::from_parts(
+            Some(64),
+            4,
+            2,
+            vec![0u8; 64],
+            vec![1.0f32; 2],
+            vec![0.0f32; 64],   // length 64
+            vec![1.0f32; 32],   // length 32 — mismatch
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "non-empty TQ+ length")]
+    fn from_parts_panics_when_tqplus_length_does_not_equal_dim() {
+        let _ = TurboQuantIndex::from_parts(
+            Some(64),
+            4,
+            2,
+            vec![0u8; 64],
+            vec![1.0f32; 2],
+            vec![0.0f32; 48],   // length 48 != dim 64
+            vec![1.0f32; 48],
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "lazy index must have n_vectors=0")]
+    fn from_parts_panics_on_lazy_with_nonzero_n_vectors() {
+        let _ = TurboQuantIndex::from_parts(
+            None,
+            4,
+            5,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+    }
+
+    #[test]
+    fn from_parts_accepts_lazy_uncommitted() {
+        // Lazy + everything empty + n_vectors=0 is the canonical lazy
+        // state the constructor must accept.
+        let idx = TurboQuantIndex::from_parts(
+            None,
+            4,
+            0,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        assert_eq!(idx.dim_opt(), None);
+        assert_eq!(idx.len(), 0);
+    }
+
+    #[test]
+    fn from_parts_accepts_eager_with_consistent_lengths() {
+        // dim=64, bit_width=4, n=2 → packed=64 bytes, scales=2.
+        // Empty TQ+ vectors are valid input (v2-loaded shape); the
+        // identity-population logic fills them in below.
+        let idx = TurboQuantIndex::from_parts(
+            Some(64),
+            4,
+            2,
+            vec![0u8; 64],
+            vec![1.0f32; 2],
+            Vec::new(),
+            Vec::new(),
+        );
+        assert_eq!(idx.dim(), 64);
+        assert_eq!(idx.len(), 2);
     }
 }

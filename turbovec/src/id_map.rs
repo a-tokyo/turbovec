@@ -7,10 +7,10 @@
 //! vectors by a stable `u64` ID that doesn't change when other vectors
 //! are inserted or removed.
 //!
-//! Roughly analogous to FAISS's `IndexIDMap2` (hash-table backed). The
-//! wrapper delegates all vector storage, rotation, scoring and
-//! serialization questions to the inner [`TurboQuantIndex`] and only
-//! owns the ID table.
+//! A bidirectional hash-table-backed `u64 ↔ slot` mapping layered over
+//! the inner [`TurboQuantIndex`]. The wrapper delegates all vector
+//! storage, rotation, scoring and serialization questions to the inner
+//! index and only owns the ID table.
 //!
 //! ```no_run
 //! use turbovec::IdMapIndex;
@@ -135,16 +135,23 @@ impl IdMapIndex {
             }
         }
 
+        // Capture the slot the first new vector will occupy BEFORE we
+        // touch the inner index, then run the inner add first. If `add_2d`
+        // returns Err (e.g. DimMismatch on a committed-dim index) the ID
+        // tables stay untouched — otherwise we'd leave `n` ghost entries
+        // pointing at slots that don't exist in the inner index, and the
+        // next search_with_allowlist / remove would corrupt further.
+        let base_slot = self.inner.len();
+        self.inner.add_2d(vectors, dim)?;
+
         self.id_to_slot.reserve(n);
         self.slot_to_id.reserve(n);
-
-        let base_slot = self.inner.len();
         for (i, &id) in ids.iter().enumerate() {
             self.id_to_slot.insert(id, base_slot + i);
         }
         self.slot_to_id.extend_from_slice(ids);
 
-        self.inner.add_2d(vectors, dim)
+        Ok(())
     }
 
     /// Remove the vector with the given external id.

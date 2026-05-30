@@ -96,6 +96,166 @@ class ReverseReranker(_AgnoReranker):
 # ---- Constructor validation -----------------------------------------------
 
 
+def test_search_results_carry_embedder():
+    # Match LanceDb._build_search_results — returned Documents must have
+    # `embedder` set to the store's embedder so downstream code can call
+    # `doc.embed()` / `doc.async_embed()` on a retrieved hit. Without
+    # the field set, `Document.embed` raises "No embedder provided".
+    embedder = StubEmbedder(DIM)
+    db = TurboQuantVectorDb(embedder=embedder)
+    db.create()
+    db.insert("h", [_doc("hello", doc_id="d-1")])
+    [result] = db.search(query="hello", limit=1)
+    assert result.embedder is embedder
+
+
+async def _async_search_embedder_body():
+    embedder = StubEmbedder(DIM)
+    db = TurboQuantVectorDb(embedder=embedder)
+    db.create()
+    db.insert("h", [_doc("hello", doc_id="d-1")])
+    [result] = await db.async_search(query="hello", limit=1)
+    assert result.embedder is embedder
+
+
+def test_async_search_results_also_carry_embedder():
+    import asyncio
+    asyncio.run(_async_search_embedder_body())
+
+
+# ---- Reference-parity tests against agno's LanceDb test suite. Each
+# pins behaviour the in-tree LanceDb unit tests exercise. ----
+
+def test_update_metadata_updates_all_docs_sharing_content_id():
+    # `content_id` is intentionally many-to-one — `update_metadata(cid, m)`
+    # must update every doc with that cid, not just the first match. The
+    # LanceDb reference covers this; our existing test only inserts one
+    # doc per content_id and wouldn't have caught a "first-match only" bug.
+    # Identify docs by a `label` in meta_data since agno's _derive_doc_id
+    # rewrites doc.id at insert time.
+    embedder = StubEmbedder(DIM)
+    db = TurboQuantVectorDb(embedder=embedder)
+    db.create()
+    db.insert("h", [
+        _doc("a", content_id="shared", meta_data={"label": "first"}),
+        _doc("b", content_id="shared", meta_data={"label": "second"}),
+        _doc("c", content_id="other", meta_data={"label": "third"}),
+    ])
+    db.update_metadata("shared", {"updated": True})
+
+    results = db.search("a", limit=10)
+    by_label = {d.meta_data["label"]: d for d in results}
+    assert by_label["first"].meta_data.get("updated") is True
+    assert by_label["second"].meta_data.get("updated") is True
+    assert by_label["third"].meta_data.get("updated") is None
+
+
+def test_update_metadata_preserves_quantized_codes():
+    # `update_metadata` must not re-derive codes — codes are precious
+    # (cost an embed + a quantise) and a silent re-embed would also
+    # break determinism. Behaviour-level check: search results are
+    # bit-identical before and after a metadata update.
+    embedder = StubEmbedder(DIM)
+    db = TurboQuantVectorDb(embedder=embedder)
+    db.create()
+    db.insert("h", [
+        _doc(f"doc-{i}", doc_id=f"d-{i}", content_id=f"cid-{i}") for i in range(3)
+    ])
+
+    before = db.search("doc-0", limit=3)
+    db.update_metadata("cid-0", {"updated": True})
+    after = db.search("doc-0", limit=3)
+    assert [d.id for d in before] == [d.id for d in after]
+
+
+def test_insert_reembeds_document_with_empty_list_embedding():
+    # In agno's async pipeline, failed embeds surface as `embedding=[]`
+    # (an empty list, distinct path from None). The integration must
+    # re-embed those rather than silently skipping or shipping the
+    # zero-length vector to the kernel. Uses BatchEmbedder so we have
+    # an embedder with the batch path the re-embed code prefers.
+    embedder = BatchEmbedder(DIM)
+    db = TurboQuantVectorDb(embedder=embedder)
+    db.create()
+    doc = Document(id="d-1", content="hello", embedding=[], meta_data={})
+    db.insert("h", [doc])
+    assert db.get_count() == 1
+
+
+def test_insert_empty_document_list_is_noop():
+    # Drop-in safety: callers passing an empty list (e.g. a Knowledge
+    # batch where every doc was filtered out upstream) must not raise
+    # and must not change store state.
+    embedder = StubEmbedder(DIM)
+    db = TurboQuantVectorDb(embedder=embedder)
+    db.create()
+    db.insert("h", [])
+    assert db.get_count() == 0
+
+
+def test_search_with_empty_query_returns_empty():
+    # LanceDb short-circuits `search("")` to []. Without this, a hash-
+    # derived embedding of "" would return arbitrary near-match garbage.
+    embedder = StubEmbedder(DIM)
+    db = TurboQuantVectorDb(embedder=embedder)
+    db.create()
+    db.insert("h", [_doc("a", doc_id="d-1")])
+    assert db.search("", limit=5) == []
+    # None also short-circuits (defensive against upstream un-init).
+    assert db.search(None, limit=5) == []  # type: ignore[arg-type]
+
+
+def test_delete_by_metadata_handles_non_string_values():
+    # `delete_by_metadata` matches on equality across heterogeneous
+    # value types — bools, floats, ints. JSON round-trip during persist
+    # could coerce types (`True` → `"true"`); the in-memory path must
+    # at minimum work natively. Identify docs by `label` since agno's
+    # _derive_doc_id rewrites doc.id at insert time.
+    embedder = StubEmbedder(DIM)
+    db = TurboQuantVectorDb(embedder=embedder)
+    db.create()
+    db.insert("h", [
+        _doc("a", meta_data={"active": True, "score": 0.9, "label": "x"}),
+        _doc("b", meta_data={"active": False, "score": 0.9, "label": "y"}),
+        _doc("c", meta_data={"active": True, "score": 0.5, "label": "z"}),
+    ])
+    db.delete_by_metadata({"active": True})
+    labels = {d.meta_data["label"] for d in db.search("a", limit=10)}
+    assert labels == {"y"}
+
+
+def test_update_metadata_with_empty_dict_is_noop():
+    # `update_metadata(cid, {})` must not raise and must not strip the
+    # existing metadata — empty dict is a real edge case (e.g. a caller
+    # built `metadata` from filtered keys and ended up with no updates).
+    embedder = StubEmbedder(DIM)
+    db = TurboQuantVectorDb(embedder=embedder)
+    db.create()
+    db.insert("h", [_doc("a", doc_id="d-1", content_id="cid-1", meta_data={"k": "v"})])
+    db.update_metadata("cid-1", {})
+
+    results = db.search("a", limit=1)
+    assert results[0].meta_data == {"k": "v"}
+
+
+def test_search_does_not_dedupe_distinct_documents_with_identical_content():
+    # LanceDb dedupes search results by content string; turbovec
+    # intentionally does NOT — each insert produces a distinct quantized
+    # vector + id, and we return both as separate hits so callers can
+    # tell them apart via content_id. Pin this deliberate divergence so
+    # a future refactor doesn't silently start matching LanceDb.
+    embedder = StubEmbedder(DIM)
+    db = TurboQuantVectorDb(embedder=embedder)
+    db.create()
+    db.insert("h", [
+        _doc("identical text", content_id="cid-1"),
+        _doc("identical text", content_id="cid-2"),
+    ])
+    results = db.search("identical text", limit=10)
+    assert len(results) == 2
+    assert {d.content_id for d in results} == {"cid-1", "cid-2"}
+
+
 def test_constructor_requires_embedder():
     with pytest.raises(ValueError, match="embedder.*required"):
         TurboQuantVectorDb()
@@ -831,3 +991,100 @@ def test_update_metadata_unknown_content_id_is_noop():
     # Nothing changed on the known doc.
     docs = list(db._u64_to_doc.values())
     assert docs[0]["meta_data"] == {"k": 1}
+
+
+# ---- Tier-2 field-completeness tests. Each pins behaviour around
+# Document fields that are populated, omitted, or diverged from LanceDb.
+# Without these, a refactor could silently change the contract. ----
+
+def test_search_results_content_origin_divergence_from_lancedb():
+    # `Document.content_origin` is an agno field set by some Reader
+    # pipelines. LanceDb drops it on insert (stores `payload` as opaque
+    # JSON of {id, name, meta_data, content_id, usage} only); turbovec
+    # mirrors that. Pin the divergence so a future caller doesn't quietly
+    # start relying on the field surviving — and so a future preservation
+    # change (turbovec preserving it where LanceDb doesn't) is a
+    # deliberate decision.
+    embedder = StubEmbedder(DIM)
+    db = TurboQuantVectorDb(embedder=embedder)
+    db.create()
+    doc = Document(
+        id="d-1",
+        content="hello",
+        embedding=embedder._embed("hello"),
+        content_origin="pdf",
+    )
+    db.insert("h", [doc])
+    [result] = db.search("hello", limit=1)
+    # Matches LanceDb behaviour: content_origin is not preserved.
+    assert result.content_origin is None
+
+
+def test_search_results_size_divergence_from_lancedb():
+    # Same divergence pin for `Document.size`.
+    embedder = StubEmbedder(DIM)
+    db = TurboQuantVectorDb(embedder=embedder)
+    db.create()
+    doc = Document(
+        id="d-1",
+        content="hello",
+        embedding=embedder._embed("hello"),
+        size=42,
+    )
+    db.insert("h", [doc])
+    [result] = db.search("hello", limit=1)
+    assert result.size is None
+
+
+def test_search_results_embedding_is_none_divergence_from_lancedb():
+    # LanceDb's `_build_search_results` sets `embedding=item["vector"]`
+    # so callers can read the original vector off a returned hit.
+    # turbovec quantizes vectors to 2-4 bits per dim and discards the
+    # full-precision form — the original vector is unrecoverable, so
+    # we return `embedding=None`. Pin this so a caller who depends on
+    # `result.embedding` after retrieval (e.g. for rerank-by-similarity)
+    # gets a clear contract from the test suite, not a runtime surprise.
+    embedder = StubEmbedder(DIM)
+    db = TurboQuantVectorDb(embedder=embedder)
+    db.create()
+    db.insert("h", [_doc("a", doc_id="d-1")])
+    [result] = db.search("a", limit=1)
+    assert result.embedding is None
+
+
+def test_reranker_output_documents_carry_reranking_score():
+    # When the reranker sets `reranking_score`, it must survive the
+    # post-rerank result list. Existing reranker tests only check the
+    # order; a refactor that re-threads `embedder` could drop other
+    # fields the reranker mutated.
+    from agno.knowledge.reranker.base import Reranker as _AgnoReranker
+
+    class ScoringReranker(_AgnoReranker):
+        def rerank(self, query: str, documents):
+            for i, d in enumerate(documents):
+                d.reranking_score = float(len(documents) - i)
+            return documents
+
+    embedder = StubEmbedder(DIM)
+    db = TurboQuantVectorDb(embedder=embedder, reranker=ScoringReranker())
+    db.create()
+    db.insert("h", [_doc(f"doc-{i}") for i in range(3)])
+
+    results = db.search("doc-0", limit=3)
+    assert all(r.reranking_score is not None for r in results)
+    assert all(isinstance(r.reranking_score, float) for r in results)
+
+
+def test_delete_by_metadata_returns_false_when_no_match():
+    # `delete_by_*` methods return bool — True when at least one doc
+    # matched (and was deleted), False otherwise. Other delete tests
+    # cover the True branch; this pins the False branch so a regression
+    # always returning True can't silently mask "I expected to delete
+    # something and nothing matched" upstream.
+    embedder = StubEmbedder(DIM)
+    db = TurboQuantVectorDb(embedder=embedder)
+    db.create()
+    db.insert("h", [_doc("a", meta_data={"tag": "x"})])
+    assert db.delete_by_metadata({"tag": "no-such-value"}) is False
+    # Original doc still present.
+    assert db.get_count() == 1

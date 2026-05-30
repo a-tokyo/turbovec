@@ -478,6 +478,13 @@ class TurboQuantVectorDb(VectorDb):
                     meta_data=dict(doc_data.get("meta_data") or {}),
                     usage=doc_data.get("usage"),
                     content_id=doc_data.get("content_id"),
+                    # Match LanceDb._build_search_results: thread the
+                    # store's embedder through so downstream code can call
+                    # `doc.embed()` / `doc.async_embed()` on a retrieved
+                    # hit without explicitly passing the embedder back in.
+                    # Without this, `doc.embed()` raises
+                    # "No embedder provided".
+                    embedder=self.embedder,
                 )
             )
         return results
@@ -488,6 +495,12 @@ class TurboQuantVectorDb(VectorDb):
         limit: int = 5,
         filters: Optional[Union[Dict[str, Any], List[Any]]] = None,
     ) -> List[Document]:
+        # An empty query string usually indicates an upstream bug
+        # (uninitialised variable, failed prompt construction). LanceDb
+        # short-circuits this to [] rather than searching with a hash-
+        # derived embedding of "", which would return arbitrary garbage.
+        if not query:
+            return []
         if self._index is None or len(self._index) == 0:
             return []
 
@@ -522,6 +535,8 @@ class TurboQuantVectorDb(VectorDb):
         limit: int = 5,
         filters: Optional[Union[Dict[str, Any], List[Any]]] = None,
     ) -> List[Document]:
+        if not query:
+            return []
         if self._index is None or len(self._index) == 0:
             return []
 
