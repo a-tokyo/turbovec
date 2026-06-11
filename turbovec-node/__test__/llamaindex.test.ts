@@ -3,7 +3,7 @@
  * turbovec-python/tests/test_llama_index.py.
  *
  * Embeds node text up front with a deterministic, text-seeded, near-orthogonal
- * embedder (the same FNV-1a + mulberry32 + Box-Muller scheme as the shared
+ * embedder (the same FNV-1a + xorshiftHash32 + Box-Muller scheme as the shared
  * `HashEmbeddings` helper, inlined here so node construction stays synchronous),
  * so correctness assertions (self-match ranks first) hold under 4-bit
  * quantization.
