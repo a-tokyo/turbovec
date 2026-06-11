@@ -118,13 +118,11 @@ impl TurboQuantIndex {
 
         // Pre-validate buffer length so we never panic in core.
         if effective_dim == 0 || !vectors.len().is_multiple_of(effective_dim) {
-            return Err(napi::Error::new(
-                ErrCode("VECTOR_BUFFER_NOT_MULTIPLE_OF_DIM"),
-                format!(
-                    "vector buffer length {} not a multiple of dim {}",
-                    vectors.len(),
-                    effective_dim
-                ),
+            return Err(map_add_error(
+                turbovec_core::AddError::VectorBufferNotMultipleOfDim {
+                    vectors_len: vectors.len(),
+                    dim: effective_dim,
+                },
             ));
         }
 
@@ -153,13 +151,7 @@ impl TurboQuantIndex {
     ) -> napi::Result<SearchResult, ErrCode> {
         let k = checked_uint_arg("k", k, u32::MAX as usize)?;
 
-        // Snapshot the borrowed query buffer BEFORE validating it. A
-        // SharedArrayBuffer-backed Float32Array can be mutated by a Worker
-        // thread between our validation and the core scan (TOCTOU), and the
-        // core re-validates and panics on NaN — which aborts the Node
-        // process across the FFI boundary. Copying first means the bytes we
-        // validate are exactly the bytes we search; the copy is cheap
-        // relative to the scan itself.
+        // Snapshot before FFI — SAB TOCTOU guard (see the first occurrence in add).
         let queries_owned: Vec<f32> = queries.to_vec();
         let q_slice: &[f32] = &queries_owned;
 

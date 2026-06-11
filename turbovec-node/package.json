@@ -79,7 +79,7 @@
     "format:check": "prettier --check .",
     "pretest": "npm run build && npm run build:ts",
     "test": "vitest run",
-    "pretest:coverage": "npm run build && npm run build:ts",
+    "pretest:coverage": "npm run pretest",
     "test:coverage": "vitest run --coverage",
     "prepack": "npm run build:ts",
     "prepublishOnly": "napi prepublish -t npm"

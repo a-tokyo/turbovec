@@ -2,11 +2,9 @@
  * Tests for the LlamaIndex.TS vector-store integration — JS twins of
  * turbovec-python/tests/test_llama_index.py.
  *
- * Embeds node text up front with a deterministic, text-seeded, near-orthogonal
- * embedder (the same FNV-1a + xorshiftHash32 + Box-Muller scheme as the shared
- * `HashEmbeddings` helper, inlined here so node construction stays synchronous),
- * so correctness assertions (self-match ranks first) hold under 4-bit
- * quantization.
+ * Embeds node text up front with the shared deterministic `hashEmbed` helper
+ * (FNV-1a + xorshiftHash32 + Box-Muller + L2-normalise), so correctness
+ * assertions (self-match ranks first) hold under 4-bit quantization.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import * as os from 'node:os';
@@ -22,6 +20,7 @@ import type { VectorStoreQuery } from '@llamaindex/core/vector-store';
 
 import { IdMapIndex } from '../index.js';
 import { TurbovecVectorStore, TurbovecQueryModeUnsupportedError } from '../ts/llamaindex.js';
+import { hashEmbed } from './helpers.js';
 
 const DIM = 64;
 
@@ -46,37 +45,6 @@ function makeNode(
   return node;
 }
 
-// Deterministic embedder (FNV-1a + xorshiftHash32 + Box-Muller + L2-normalise),
-// matching the shared `HashEmbeddings` helper but synchronous.
-// NOTE: must stay byte-stable: changing this function invalidates all seeded test vectors.
-function hashEmbed(text: string, dim: number): number[] {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < text.length; i++) {
-    h ^= text.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  let s = h >>> 0;
-  // xorshiftHash32 inline: must stay byte-stable
-  const rng = () => {
-    s = (Math.imul(s ^ (s >>> 15), s | 1) ^ 1) >>> 0;
-    s ^= s << 3;
-    s = ((s ^ (s >>> 12)) * 0x45d9f3b) >>> 0;
-    return (s >>> 0) / 0x100000000;
-  };
-  const v = new Array<number>(dim);
-  for (let j = 0; j < dim; j++) {
-    const u1 = Math.max(rng(), 1e-10);
-    const u2 = rng();
-    v[j] = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
-  }
-  let norm = 0;
-  // `j` is bounded by `dim`, the array length, so every access is in-bounds.
-  for (let j = 0; j < dim; j++) norm += v[j]! * v[j]!;
-  norm = Math.sqrt(norm) + 1e-9;
-  for (let j = 0; j < dim; j++) v[j]! /= norm;
-  return v;
-}
-
 function defaultQuery(
   text: string,
   k: number,
@@ -99,8 +67,6 @@ function tmpDir(): string {
 afterEach(() => {
   for (const dir of tmpDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
-
-// ── Construction ──────────────────────────────────────────────────────────
 
 describe('construction', () => {
   it('no-arg constructor is lazy (dim null)', () => {
@@ -128,8 +94,6 @@ describe('construction', () => {
     expect(store.client().dim).toBe(DIM);
   });
 });
-
-// ── Add + query ─────────────────────────────────────────────────────────────
 
 describe('add and query', () => {
   it('add returns node ids; query DEFAULT returns nodes', async () => {
@@ -214,8 +178,6 @@ describe('add and query', () => {
   });
 });
 
-// ── Upsert / intra-batch dedup ──────────────────────────────────────────────
-
 describe('upsert and dedup', () => {
   it('upsert replaces same node id (last add wins)', async () => {
     const store = new TurbovecVectorStore();
@@ -247,8 +209,6 @@ describe('upsert and dedup', () => {
     expect(res.ids).toEqual(['my-id']);
   });
 });
-
-// ── Delete ──────────────────────────────────────────────────────────────────
 
 describe('delete', () => {
   it('delete by refDocId removes every matching node', async () => {
@@ -307,8 +267,6 @@ describe('delete', () => {
   });
 });
 
-// ── getNodes ─────────────────────────────────────────────────────────────────
-
 describe('getNodes', () => {
   it('by node ids', async () => {
     const store = new TurbovecVectorStore();
@@ -339,8 +297,6 @@ describe('getNodes', () => {
     expect(store.getNodes().length).toBe(2);
   });
 });
-
-// ── Filters in query ─────────────────────────────────────────────────────────
 
 describe('query filters', () => {
   const fiveNode = async (): Promise<TurbovecVectorStore> => {
@@ -523,8 +479,6 @@ describe('query docIds', () => {
   });
 });
 
-// ── Unsupported query mode ───────────────────────────────────────────────────
-
 describe('unsupported query mode', () => {
   it('query with mode === undefined is treated as DEFAULT (no throw)', async () => {
     // VectorStoreQuery.mode is typed as required, but a JS caller or an older
@@ -564,8 +518,6 @@ describe('unsupported query mode', () => {
     ).rejects.toThrow(/full-precision/);
   });
 });
-
-// ── Missing-handle guard ─────────────────────────────────────────────────────
 
 describe('missing-handle guard', () => {
   it('query skips results whose handle is missing from the nodestore', async () => {
@@ -660,8 +612,6 @@ describe('end-to-end retrieval round-trip', () => {
     expect(node.sourceNode?.nodeId).toBe('doc-1');
   });
 });
-
-// ── Persistence ──────────────────────────────────────────────────────────────
 
 describe('persist / fromPersistDir', () => {
   it('round-trips index + nodestore', async () => {

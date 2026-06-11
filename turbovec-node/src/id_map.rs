@@ -101,13 +101,11 @@ impl IdMapIndex {
 
         // Pre-validate buffer length.
         if effective_dim == 0 || !vectors.len().is_multiple_of(effective_dim) {
-            return Err(napi::Error::new(
-                ErrCode("VECTOR_BUFFER_NOT_MULTIPLE_OF_DIM"),
-                format!(
-                    "vector buffer length {} not a multiple of dim {}",
-                    vectors.len(),
-                    effective_dim
-                ),
+            return Err(map_add_error(
+                turbovec_core::AddError::VectorBufferNotMultipleOfDim {
+                    vectors_len: vectors.len(),
+                    dim: effective_dim,
+                },
             ));
         }
 
@@ -166,13 +164,7 @@ impl IdMapIndex {
     ) -> napi::Result<IdSearchResult, ErrCode> {
         let k = checked_uint_arg("k", k, u32::MAX as usize)?;
 
-        // Snapshot the borrowed query buffer BEFORE validating it. A
-        // SharedArrayBuffer-backed Float32Array can be mutated by a Worker
-        // thread between our validation and the core scan (TOCTOU), and the
-        // core re-validates and panics on NaN — which aborts the Node
-        // process across the FFI boundary. Copying first means the bytes we
-        // validate are exactly the bytes we search; the copy is cheap
-        // relative to the scan itself.
+        // Snapshot before FFI — SAB TOCTOU guard (see the first occurrence in add_with_ids).
         let queries_owned: Vec<f32> = queries.to_vec();
         let q_slice: &[f32] = &queries_owned;
 
@@ -205,11 +197,9 @@ impl IdMapIndex {
             }
         }
 
-        // Extract and validate allowlist. Snapshot the borrowed
-        // BigUint64Array BEFORE validating it (same SAB TOCTOU hazard as the
-        // queries above: the core asserts on unknown ids, so a mutation
-        // between validation and use would abort the process). The owned Vec
-        // also stays alive for the `search_with_allowlist` call below.
+        // Extract and validate allowlist. Snapshot before FFI — SAB TOCTOU guard
+        // (see the first occurrence in add_with_ids). The owned Vec also stays alive
+        // for the `search_with_allowlist` call below.
         let allow_owned: Option<Vec<u64>> = match options.and_then(|o| o.allowlist) {
             Some(al) => {
                 let owned: Vec<u64> = al.to_vec();
@@ -218,19 +208,16 @@ impl IdMapIndex {
                 }
 
                 // Collect up to 6 unknown ids for the error message.
-                let mut unknown: Vec<u64> = Vec::new();
-                for &id in &owned {
-                    if !self.inner.contains(id) {
-                        unknown.push(id);
-                        if unknown.len() >= 6 {
-                            break;
-                        }
-                    }
-                }
+                let mut unknown: Vec<u64> = owned
+                    .iter()
+                    .filter(|&&id| !self.inner.contains(id))
+                    .copied()
+                    .take(6)
+                    .collect();
                 if !unknown.is_empty() {
-                    let more = unknown.len() > 5;
-                    let preview: Vec<u64> = unknown.into_iter().take(5).collect();
-                    return Err(allowlist_unknown_ids(&preview, more));
+                    let more = unknown.len() == 6;
+                    unknown.truncate(5);
+                    return Err(allowlist_unknown_ids(&unknown, more));
                 }
 
                 Some(owned)

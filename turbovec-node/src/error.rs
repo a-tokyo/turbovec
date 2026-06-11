@@ -128,7 +128,7 @@ pub fn index_out_of_range(idx: usize, len: usize) -> napi::Error<ErrCode> {
 }
 
 pub fn io_error(e: &std::io::Error) -> napi::Error<ErrCode> {
-    err("IO_ERROR", format!("{e}"))
+    err("IO_ERROR", e.to_string())
 }
 
 /// Validate a JS number destined for an unsigned-integer parameter.

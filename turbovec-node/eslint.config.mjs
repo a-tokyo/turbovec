@@ -35,7 +35,7 @@ export default tseslint.config(
   },
   {
     // Type-checked friction inherent to the framework contracts — NOT real
-    // defects, so relaxed only for the integration source. The async/await
+    // defects, so relaxed for the integration source and its tests. The async/await
     // safety rules that actually matter (no-floating-promises,
     // no-misused-promises — the reason this config is type-checked) stay ON.
     //
@@ -47,7 +47,12 @@ export default tseslint.config(
     //    `Metadata` is `Record<string, any>` and its filter operators / query
     //    modes are enums whose identity lint cannot match across the package
     //    boundary; reading those values is unavoidably "unsafe" to the linter.
-    files: ['ts/**/*.ts'],
+    files: [
+      'ts/**/*.ts',
+      '__test__/langchain.test.ts',
+      '__test__/llamaindex.test.ts',
+      '__test__/helpers.ts',
+    ],
     rules: {
       '@typescript-eslint/require-await': 'off',
       '@typescript-eslint/no-unsafe-member-access': 'off',
@@ -67,23 +72,6 @@ export default tseslint.config(
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-unsafe-member-access': 'off',
-    },
-  },
-  {
-    // The integration tests exercise the framework contracts the same way the
-    // integration source does: reading `Record<string, any>` metadata,
-    // re-parsing tampered persistence JSON (`JSON.parse` → `any`) and defining
-    // async stub embedders to satisfy the `EmbeddingsInterface` signature. Same
-    // framework-driven friction as `ts/**`; the floating/misused-promise rules
-    // still apply.
-    files: ['__test__/langchain.test.ts', '__test__/llamaindex.test.ts', '__test__/helpers.ts'],
-    rules: {
-      '@typescript-eslint/require-await': 'off',
-      '@typescript-eslint/no-unsafe-member-access': 'off',
-      '@typescript-eslint/no-unsafe-assignment': 'off',
-      '@typescript-eslint/no-unsafe-argument': 'off',
-      '@typescript-eslint/no-unsafe-return': 'off',
-      '@typescript-eslint/no-unsafe-enum-comparison': 'off',
     },
   },
 );

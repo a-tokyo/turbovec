@@ -63,15 +63,39 @@ export function row(
   return buf.slice(i * k, (i + 1) * k);
 }
 
-/** Extract a row of Float32Array values as a regular JS number array. */
-export function rowNumbers(buf: Float32Array, i: number, k: number): number[] {
-  return Array.from(row(buf, i, k));
+/**
+ * Deterministic text -> unit-vector kernel (FNV-1a + xorshiftHash32 + Box-Muller
+ * + L2-normalise). The same text always maps to the same vector, distinct texts
+ * map to near-orthogonal vectors.
+ *
+ * NOTE: must stay byte-stable: changing this function invalidates all seeded
+ * test vectors that rely on it (LangChain and LlamaIndex tests both use it).
+ */
+export function hashEmbed(text: string, dim: number): number[] {
+  // FNV-1a string hash -> 32-bit seed.
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  const rng = xorshiftHash32(h >>> 0);
+  const v = new Array<number>(dim);
+  for (let j = 0; j < dim; j++) {
+    const u1 = Math.max(rng(), 1e-10);
+    const u2 = rng();
+    v[j] = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+  }
+  let norm = 0;
+  // `j` is bounded by `dim`, the array length, so every access is in-bounds.
+  for (let j = 0; j < dim; j++) norm += v[j]! * v[j]!;
+  norm = Math.sqrt(norm) + 1e-9;
+  for (let j = 0; j < dim; j++) v[j]! /= norm;
+  return v;
 }
 
 /**
  * Deterministic text -> unit-vector embedder for the LangChain tests. JS twin
- * of the Python `StubEmbeddings`: hashes the input string to seed `xorshiftHash32`,
- * then draws a Normal(0,1) vector via Box-Muller and L2-normalises it. The same
+ * of the Python `StubEmbeddings`. Uses `hashEmbed` internally. The same
  * text always maps to the same vector (so a self-query self-matches even after
  * quantization), while distinct texts map to near-orthogonal vectors (so
  * semantic-ordering assertions are stable). Implements the EmbeddingsInterface
@@ -80,34 +104,12 @@ export function rowNumbers(buf: Float32Array, i: number, k: number): number[] {
 export class HashEmbeddings {
   constructor(private readonly dim: number = 64) {}
 
-  private embed(text: string): number[] {
-    // FNV-1a string hash -> 32-bit seed.
-    let h = 0x811c9dc5;
-    for (let i = 0; i < text.length; i++) {
-      h ^= text.charCodeAt(i);
-      h = Math.imul(h, 0x01000193);
-    }
-    const rng = xorshiftHash32(h >>> 0);
-    const v = new Array<number>(this.dim);
-    for (let j = 0; j < this.dim; j++) {
-      const u1 = Math.max(rng(), 1e-10);
-      const u2 = rng();
-      v[j] = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
-    }
-    let norm = 0;
-    // `j` is bounded by `this.dim`, the array length, so every access is in-bounds.
-    for (let j = 0; j < this.dim; j++) norm += v[j]! * v[j]!;
-    norm = Math.sqrt(norm) + 1e-9;
-    for (let j = 0; j < this.dim; j++) v[j]! /= norm;
-    return v;
-  }
-
   async embedDocuments(texts: string[]): Promise<number[][]> {
-    return texts.map((t) => this.embed(t));
+    return texts.map((t) => hashEmbed(t, this.dim));
   }
 
   async embedQuery(text: string): Promise<number[]> {
-    return this.embed(text);
+    return hashEmbed(text, this.dim);
   }
 }
 

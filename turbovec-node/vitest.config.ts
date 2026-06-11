@@ -18,11 +18,7 @@ export default defineConfig({
         // Platform-specific binary packages.
         'npm/**',
       ],
-      // Thresholds are set to the measured baseline (see CONTRIBUTING.md).
-      // They form a ratchet: raise them when coverage genuinely improves.
-      // Measured baseline (2026-06-11): stmts 94.43, branch 86.61, funcs 95.23, lines 94.43.
-      // Thresholds are rounded down to give ~4-6pp headroom while still forming a
-      // meaningful ratchet. Raise them as coverage improves.
+      // Thresholds form a ratchet — raise them when coverage genuinely improves.
       thresholds: {
         lines: 90,
         functions: 90,
