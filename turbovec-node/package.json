@@ -17,7 +17,7 @@
     "./langchain": {
       "import": {
         "types": "./dist/langchain.d.mts",
-        "default": "./dist/langchain.js"
+        "default": "./dist/langchain.mjs"
       },
       "require": {
         "types": "./dist/langchain.d.ts",
@@ -27,7 +27,7 @@
     "./llamaindex": {
       "import": {
         "types": "./dist/llamaindex.d.mts",
-        "default": "./dist/llamaindex.js"
+        "default": "./dist/llamaindex.mjs"
       },
       "require": {
         "types": "./dist/llamaindex.d.ts",

@@ -36,6 +36,10 @@ import {
 // binary. Bundlers must NOT inline this (see tsup `external`).
 import { IdMapIndex } from '../index.js';
 
+// Re-export the native error-code union + type guard so they're reachable via
+// the `turbovec/llamaindex` subpath without adding a new package entry point.
+export { isTurbovecError, type TurbovecErrorCode } from './errors.js';
+
 const INDEX_FILENAME = 'index.tvim';
 const STORE_FILENAME = 'nodestore.json';
 /**
@@ -148,7 +152,7 @@ const unsupportedModeMsg = (mode: VectorStoreQueryMode): string =>
  */
 export class TurbovecVectorStore extends BaseVectorStore {
   storesText = true;
-  isEmbeddingQuery = true;
+  override isEmbeddingQuery = true;
 
   private readonly index: IdMapIndex;
   private readonly bitWidth: number;
@@ -223,7 +227,11 @@ export class TurbovecVectorStore extends BaseVectorStore {
     }
 
     const rows = nodes.map((node) => node.getEmbedding());
-    const dim = rows[0].length;
+    // `rows` is non-empty here (we returned early on an empty batch), so index
+    // 0 exists.
+    const firstRow = rows[0];
+    if (firstRow === undefined) return [];
+    const dim = firstRow.length;
     // Validate before mutating any existing data so we surface a clean error
     // rather than a native panic.
     const existingDim = this.index.dim;
@@ -237,7 +245,8 @@ export class TurbovecVectorStore extends BaseVectorStore {
     }
 
     const flat = new Float32Array(rows.length * dim);
-    for (let i = 0; i < rows.length; i++) flat.set(rows[i], i * dim);
+    // `i` is bounded by `rows.length`, so `rows[i]` is always defined.
+    for (let i = 0; i < rows.length; i++) flat.set(rows[i]!, i * dim);
 
     const handles = rows.map(() => this.issueHandle());
     const handleArray = BigUint64Array.from(handles);
@@ -253,9 +262,10 @@ export class TurbovecVectorStore extends BaseVectorStore {
     }
 
     const ids: string[] = [];
+    // `i` is bounded by `nodes.length`; `handles` is the parallel per-node array.
     for (let i = 0; i < nodes.length; i++) {
-      const node = nodes[i];
-      const handle = handles[i];
+      const node = nodes[i]!;
+      const handle = handles[i]!;
       const nid = node.id_;
       this.nodeIdToU64.set(nid, handle);
       this.u64ToNodeId.set(handle, nid);
@@ -378,12 +388,13 @@ export class TurbovecVectorStore extends BaseVectorStore {
       // mapping for (e.g. a stale handle after an out-of-band index edit), skip
       // it rather than dereferencing `undefined` and hard-crashing. A missing
       // nodestore entry for a known handle is treated the same way.
-      const nid = this.u64ToNodeId.get(result.ids[i]);
+      // `i` is bounded by `result.ids.length`; `ids` and `scores` are parallel.
+      const nid = this.u64ToNodeId.get(result.ids[i]!);
       if (nid === undefined) continue;
       const entry = this.nodes.get(nid);
       if (entry === undefined) continue;
       nodes.push(reconstructNode(nid, entry));
-      similarities.push(result.scores[i]);
+      similarities.push(result.scores[i]!);
       ids.push(nid);
     }
     return { nodes, similarities, ids };

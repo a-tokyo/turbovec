@@ -345,8 +345,12 @@ describe('TurboQuantIndex.prepare + write + load', () => {
     parts.push(Buffer.from('TVPI'));
     parts.push(Buffer.from([3])); // version
     parts.push(Buffer.from([4])); // bit_width
-    const d = Buffer.alloc(4); d.writeUInt32LE(12); parts.push(d); // dim=12
-    const n = Buffer.alloc(4); n.writeUInt32LE(2); parts.push(n); // n_vectors=2
+    const d = Buffer.alloc(4);
+    d.writeUInt32LE(12);
+    parts.push(d); // dim=12
+    const n = Buffer.alloc(4);
+    n.writeUInt32LE(2);
+    parts.push(n); // n_vectors=2
     parts.push(Buffer.alloc(8)); // (dim/8)*bw*n = 1*4*2 = 8 packed bytes
     parts.push(Buffer.alloc(8)); // 2 f32 scales
     parts.push(Buffer.alloc(4)); // n_calib = 0

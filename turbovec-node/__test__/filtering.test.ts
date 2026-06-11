@@ -116,16 +116,18 @@ describe('TurboQuantIndex mask filtering', () => {
       const unfilRow = Array.from(row(unfiltered.indices, qi, unfilK)).map(Number);
       const unfilScores = Array.from(row(unfiltered.scores, qi, unfilK));
       const kept = unfilRow
-        .map((slot, j) => ({ slot, score: unfilScores[j] }))
+        // `j` indexes the parallel `unfilScores` row (same length as `unfilRow`).
+        .map((slot, j) => ({ slot, score: unfilScores[j]! }))
         .filter(({ slot }) => mask[slot])
         .slice(0, k);
 
       // Compare with masked search row
       const maskedRes = idx.search(queries.slice(qi * DIM, (qi + 1) * DIM), k, { mask });
       expect(maskedRes.k).toBe(k);
+      // `j` is bounded by `k`; the result rows and `kept` both hold k entries.
       for (let j = 0; j < k; j++) {
-        expect(Number(maskedRes.indices[j])).toBe(kept[j].slot);
-        expect(Math.abs(maskedRes.scores[j] - kept[j].score)).toBeLessThan(1e-4);
+        expect(Number(maskedRes.indices[j]!)).toBe(kept[j]!.slot);
+        expect(Math.abs(maskedRes.scores[j]! - kept[j]!.score)).toBeLessThan(1e-4);
       }
     }
   });
@@ -162,7 +164,8 @@ describe('IdMapIndex allowlist filtering', () => {
 
     for (let qi = 0; qi < res.nq; qi++) {
       for (let j = 0; j < res.k; j++) {
-        const id = res.ids[qi * res.k + j];
+        // `qi*res.k + j` is bounded by the flat nq×k result buffer.
+        const id = res.ids[qi * res.k + j]!;
         expect(allowedSet.has(id)).toBe(true);
       }
     }

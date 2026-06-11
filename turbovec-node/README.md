@@ -19,6 +19,19 @@ Prebuilt binaries ship for linux x64/arm64 (gnu), macOS arm64, and Windows x64; 
 
 > **x86-64 CPU baseline.** The x64 binaries are compiled for the `x86-64-v3` micro-architecture (AVX2, Haswell 2013+). Any CPU that can run the AVX2 fallback kernel runs the whole package; the AVX-512 kernel is gated at runtime and only activates on hardware that supports it.
 
+### Supported platforms
+
+Prebuilt native binaries are published for exactly four targets:
+
+| Platform                    | Target triple               |
+| --------------------------- | --------------------------- |
+| Linux x64 (glibc)           | `x86_64-unknown-linux-gnu`  |
+| Linux arm64 (glibc)         | `aarch64-unknown-linux-gnu` |
+| macOS arm64 (Apple Silicon) | `aarch64-apple-darwin`      |
+| Windows x64                 | `x86_64-pc-windows-msvc`    |
+
+There is **no source-build fallback**. Unlike the Python package (which publishes an sdist that compiles from source), this Node addon has no compile-on-install path: on any platform without a prebuilt binary — Intel macOS (`x86_64-apple-darwin`), Windows arm64 (`win32-arm64`), or musl-based Linux such as Alpine — install resolves no matching `optionalDependencies` package and the loader throws a clear "native binding not found" error at `require`/`import` time. Use one of the four targets above (e.g. a glibc-based image rather than Alpine in containers).
+
 ## Quickstart — `TurboQuantIndex`
 
 Positional index: each vector is identified by its insertion slot (`0..n`). Vectors are passed as a **flat row-major `Float32Array`** of length `n * dim`.

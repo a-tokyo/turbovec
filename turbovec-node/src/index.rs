@@ -8,10 +8,10 @@ use crate::error::{
     map_construct_error, mask_length_mismatch, query_dim_mismatch, ErrCode,
 };
 
-/// Mirror of turbovec_core's MAX_INPUT_MAGNITUDE.  Any query coordinate with
-/// |value| >= this threshold (or that is non-finite) will panic in the core
-/// search kernel; we reject it here before crossing the FFI boundary.
-const MAX_INPUT_MAGNITUDE: f32 = 1e16;
+/// Reused from core: any query coordinate with `|value| >= MAX_INPUT_MAGNITUDE`
+/// (or that is non-finite) will panic in the core search kernel; we reject it
+/// here before crossing the FFI boundary.
+use turbovec_core::MAX_INPUT_MAGNITUDE;
 
 // We want the proc-macro to see a literal `Result` path segment so it
 // sets `is_ret_result = true` and generates the correct match-based

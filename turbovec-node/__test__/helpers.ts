@@ -36,9 +36,10 @@ export function unitVectors(n: number, dim: number, seed = 0): Float32Array {
     }
     // L2-normalise.
     let norm = 0;
-    for (let j = 0; j < dim; j++) norm += row[j] * row[j];
+    // `j` is bounded by `dim`, the subarray length, so every access is in-bounds.
+    for (let j = 0; j < dim; j++) norm += row[j]! * row[j]!;
     norm = Math.sqrt(norm) + 1e-9;
-    for (let j = 0; j < dim; j++) row[j] /= norm;
+    for (let j = 0; j < dim; j++) row[j]! /= norm;
   }
 
   return out;
@@ -56,12 +57,12 @@ export function row(
   i: number,
   k: number,
 ): Float32Array | BigInt64Array | BigUint64Array {
-  return buf.slice(i * k, (i + 1) * k) as Float32Array | BigInt64Array | BigUint64Array;
+  return buf.slice(i * k, (i + 1) * k);
 }
 
 /** Extract a row of Float32Array values as a regular JS number array. */
 export function rowNumbers(buf: Float32Array, i: number, k: number): number[] {
-  return Array.from(row(buf, i, k) as Float32Array);
+  return Array.from(row(buf, i, k));
 }
 
 /**
@@ -91,9 +92,10 @@ export class HashEmbeddings {
       v[j] = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
     }
     let norm = 0;
-    for (let j = 0; j < this.dim; j++) norm += v[j] * v[j];
+    // `j` is bounded by `this.dim`, the array length, so every access is in-bounds.
+    for (let j = 0; j < this.dim; j++) norm += v[j]! * v[j]!;
     norm = Math.sqrt(norm) + 1e-9;
-    for (let j = 0; j < this.dim; j++) v[j] /= norm;
+    for (let j = 0; j < this.dim; j++) v[j]! /= norm;
     return v;
   }
 
@@ -110,7 +112,8 @@ export class HashEmbeddings {
 export function assertClose(a: Float32Array, b: Float32Array, tol = 1e-5): void {
   if (a.length !== b.length) throw new Error(`Length mismatch: ${a.length} vs ${b.length}`);
   for (let i = 0; i < a.length; i++) {
-    if (Math.abs(a[i] - b[i]) > tol) {
+    // `i` is bounded by `a.length`; lengths are checked equal above.
+    if (Math.abs(a[i]! - b[i]!) > tol) {
       throw new Error(`Values differ at [${i}]: ${a[i]} vs ${b[i]} (tol=${tol})`);
     }
   }

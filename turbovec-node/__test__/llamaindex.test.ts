@@ -68,9 +68,10 @@ function hashEmbed(text: string, dim: number): number[] {
     v[j] = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
   }
   let norm = 0;
-  for (let j = 0; j < dim; j++) norm += v[j] * v[j];
+  // `j` is bounded by `dim`, the array length, so every access is in-bounds.
+  for (let j = 0; j < dim; j++) norm += v[j]! * v[j]!;
   norm = Math.sqrt(norm) + 1e-9;
-  for (let j = 0; j < dim; j++) v[j] /= norm;
+  for (let j = 0; j < dim; j++) v[j]! /= norm;
   return v;
 }
 
@@ -148,7 +149,7 @@ describe('add and query', () => {
     const topNode = res.nodes![0] as TextNode;
     expect(topNode.text).toBe('alpha');
     for (let i = 1; i < res.similarities.length; i++) {
-      expect(res.similarities[i - 1]).toBeGreaterThanOrEqual(res.similarities[i]);
+      expect(res.similarities[i - 1]!).toBeGreaterThanOrEqual(res.similarities[i]!);
     }
   });
 
@@ -166,7 +167,7 @@ describe('add and query', () => {
     const store = new TurbovecVectorStore();
     await store.add([makeNode('chunk', { refDocId: 'doc-1' })]);
     const res = await store.query(defaultQuery('chunk', 1));
-    expect(res.nodes![0].sourceNode?.nodeId).toBe('doc-1');
+    expect(res.nodes![0]!.sourceNode?.nodeId).toBe('doc-1');
   });
 
   it('empty store query returns empty', async () => {
@@ -207,7 +208,7 @@ describe('add and query', () => {
     const store = new TurbovecVectorStore();
     await store.add([makeNode('hello')]);
     const res = await store.query(defaultQuery('hello', 1));
-    expect(res.nodes![0].embedding).toBeUndefined();
+    expect(res.nodes![0]!.embedding).toBeUndefined();
   });
 });
 
@@ -220,8 +221,8 @@ describe('upsert and dedup', () => {
     await store.add([makeNode('v2', { id: 'x', metadata: { tag: 'new' } })]);
     expect(store.client().length).toBe(1);
     const [node] = store.getNodes(['x']) as TextNode[];
-    expect(node.text).toBe('v2');
-    expect(node.metadata.tag).toBe('new');
+    expect(node!.text).toBe('v2');
+    expect(node!.metadata.tag).toBe('new');
   });
 
   it('intra-batch duplicate node id raises', async () => {
@@ -239,7 +240,7 @@ describe('upsert and dedup', () => {
     bad.embedding = hashEmbed('world', 32);
     await expect(store.add([bad])).rejects.toThrow();
     const [node] = store.getNodes(['my-id']) as TextNode[];
-    expect(node.text).toBe('hello');
+    expect(node!.text).toBe('hello');
     const res = await store.query(defaultQuery('hello', 5));
     expect(res.ids).toEqual(['my-id']);
   });
@@ -653,8 +654,8 @@ describe('persist / fromPersistDir', () => {
     fs.writeFileSync(file, JSON.stringify(data));
     const loaded = TurbovecVectorStore.fromPersistDir(dir);
     const [node] = loaded.getNodes(['leg']) as TextNode[];
-    expect(node.text).toBe('legacy');
-    expect(node.metadata.k).toBe(1);
-    expect(node.sourceNode?.nodeId).toBe('d1');
+    expect(node!.text).toBe('legacy');
+    expect(node!.metadata.k).toBe(1);
+    expect(node!.sourceNode?.nodeId).toBe('d1');
   });
 });

@@ -27,6 +27,10 @@ type AddDocumentOptions = Record<string, unknown>;
 // binary. Bundlers must NOT inline this (see tsup `external`).
 import { IdMapIndex } from '../index.js';
 
+// Re-export the native error-code union + type guard so they're reachable via
+// the `turbovec/langchain` subpath without adding a new package entry point.
+export { isTurbovecError, type TurbovecErrorCode } from './errors.js';
+
 const INDEX_FILENAME = 'index.tvim';
 const STORE_FILENAME = 'docstore.json';
 /**
@@ -133,8 +137,8 @@ export class TurbovecVectorStore extends VectorStore {
     // IdMapIndex supports lazy construction: passing no dim commits the dim on
     // the first add. Matches the in-memory store's no-dim ergonomics.
     this.index = args.index ?? new IdMapIndex(undefined, this.bitWidth);
-    this.docs = args.docs ?? new Map();
-    this.strToU64 = args.strToU64 ?? new Map();
+    this.docs = args.docs ?? new Map<string, DocstoreEntry>();
+    this.strToU64 = args.strToU64 ?? new Map<string, bigint>();
     this.u64ToStr = new Map();
     for (const [sid, handle] of this.strToU64) this.u64ToStr.set(handle, sid);
     this.nextU64 = args.nextU64 ?? 0n;
@@ -199,13 +203,19 @@ export class TurbovecVectorStore extends VectorStore {
       const lastIndexById = new Map<string, number>();
       ids.forEach((id, i) => lastIndexById.set(id, i));
       const keep = [...lastIndexById.values()].sort((a, b) => a - b);
-      ids = keep.map((i) => ids[i]);
-      texts = keep.map((i) => texts[i]);
-      metadatas = keep.map((i) => metadatas[i]);
-      rows = keep.map((i) => rows[i]);
+      // `keep` holds indices drawn from `ids.forEach`, so every `i` is a valid
+      // in-bounds index into the parallel input arrays.
+      ids = keep.map((i) => ids[i]!);
+      texts = keep.map((i) => texts[i]!);
+      metadatas = keep.map((i) => metadatas[i]!);
+      rows = keep.map((i) => rows[i]!);
     }
 
-    const dim = rows[0].length;
+    // `rows` is non-empty here (we returned early on an empty batch and dedup
+    // always keeps at least one row), so index 0 exists.
+    const firstRow = rows[0];
+    if (firstRow === undefined) return [];
+    const dim = firstRow.length;
     // Validate before mutating any existing data so we surface a clean error
     // rather than a native panic.
     const existingDim = this.index.dim;
@@ -219,7 +229,8 @@ export class TurbovecVectorStore extends VectorStore {
     }
 
     const flat = new Float32Array(rows.length * dim);
-    for (let i = 0; i < rows.length; i++) flat.set(rows[i], i * dim);
+    // `i` is bounded by `rows.length`, so `rows[i]` is always defined.
+    for (let i = 0; i < rows.length; i++) flat.set(rows[i]!, i * dim);
 
     const handles = rows.map(() => this.issueHandle());
     const handleArray = BigUint64Array.from(handles);
@@ -236,12 +247,13 @@ export class TurbovecVectorStore extends VectorStore {
     const duplicates = ids.filter((id) => this.strToU64.has(id));
     if (duplicates.length > 0) await this.delete({ ids: duplicates });
 
+    // `i` is bounded by `ids.length` and the parallel arrays share that length.
     for (let i = 0; i < ids.length; i++) {
-      const id = ids[i];
-      const handle = handles[i];
+      const id = ids[i]!;
+      const handle = handles[i]!;
       this.strToU64.set(id, handle);
       this.u64ToStr.set(handle, id);
-      this.docs.set(id, { text: texts[i], metadata: metadatas[i] });
+      this.docs.set(id, { text: texts[i]!, metadata: metadatas[i]! });
     }
     return resultIds;
   }
@@ -298,7 +310,8 @@ export class TurbovecVectorStore extends VectorStore {
       // mapping for (e.g. a stale handle after an out-of-band index edit), skip
       // it rather than dereferencing `undefined` and hard-crashing. A missing
       // docstore entry for a known handle is treated the same way.
-      const sid = this.u64ToStr.get(result.ids[i]);
+      // `i` is bounded by `result.ids.length`; `ids` and `scores` are parallel.
+      const sid = this.u64ToStr.get(result.ids[i]!);
       if (sid === undefined) continue;
       const entry = this.docs.get(sid);
       if (entry === undefined) continue;
@@ -307,7 +320,7 @@ export class TurbovecVectorStore extends VectorStore {
         pageContent: entry.text,
         metadata: { ...entry.metadata },
       });
-      out.push([doc, relevance(result.scores[i])]);
+      out.push([doc, relevance(result.scores[i]!)]);
     }
     return out;
   }
@@ -343,7 +356,7 @@ export class TurbovecVectorStore extends VectorStore {
   }
 
   /** Remove documents by id. Missing ids are silently skipped; `ids` omitted is a no-op. */
-  async delete(params?: { ids?: string[] }): Promise<void> {
+  override async delete(params?: { ids?: string[] }): Promise<void> {
     const ids = params?.ids;
     if (ids === undefined || ids.length === 0) return;
     for (const sid of ids) {
@@ -363,20 +376,22 @@ export class TurbovecVectorStore extends VectorStore {
    * MMR requires for pairwise diversity scoring. Throws
    * {@link TurbovecMMRUnsupportedError}.
    */
-  async maxMarginalRelevanceSearch(): Promise<DocumentInterface[]> {
+  override async maxMarginalRelevanceSearch(): Promise<DocumentInterface[]> {
     throw new TurbovecMMRUnsupportedError(MMR_MSG);
   }
 
   // ---- Construction helpers -----------------------------------------
 
-  static async fromTexts(
+  static override async fromTexts(
     texts: string[],
     metadatas: object[] | object,
     embeddings: EmbeddingsInterface,
     dbConfig: TurbovecVectorStoreArgs & { ids?: string[] } = {},
   ): Promise<TurbovecVectorStore> {
     const docs = texts.map((text, i) => {
-      const metadata = Array.isArray(metadatas) ? (metadatas[i] ?? {}) : metadatas;
+      const metadata: object = Array.isArray(metadatas)
+        ? ((metadatas as object[])[i] ?? {})
+        : metadatas;
       return new Document({
         pageContent: text,
         metadata: metadata as Record<string, unknown>,
@@ -386,7 +401,7 @@ export class TurbovecVectorStore extends VectorStore {
     return TurbovecVectorStore.fromDocuments(docs, embeddings, dbConfig);
   }
 
-  static async fromDocuments(
+  static override async fromDocuments(
     docs: DocumentInterface[],
     embeddings: EmbeddingsInterface,
     dbConfig: TurbovecVectorStoreArgs & { ids?: string[] } = {},

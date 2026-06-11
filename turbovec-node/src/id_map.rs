@@ -8,8 +8,8 @@ use crate::error::{
     map_add_error, map_construct_error, query_dim_mismatch, ErrCode,
 };
 
-/// Mirror of turbovec_core's MAX_INPUT_MAGNITUDE — reject before FFI crossing.
-const MAX_INPUT_MAGNITUDE: f32 = 1e16;
+/// Reused from core to reject invalid input before the FFI crossing.
+use turbovec_core::MAX_INPUT_MAGNITUDE;
 
 /// Search result returned by `IdMapIndex.search`.
 #[napi(object)]

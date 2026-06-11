@@ -20,7 +20,11 @@ export default defineConfig({
   // local native addon is resolved at runtime; never bundle them into the
   // published output.
   external: [/^@langchain\/core/, /^@llamaindex\/core/, '../index.js'],
+  // Emit ESM as `.mjs` (and CJS as `.cjs`) so ESM consumers don't trip the
+  // Node `MODULE_TYPELESS_PACKAGE_JSON` warning (the package has no
+  // `"type":"module"` — and must not, or the CJS napi `index.js` breaks).
+  // tsup emits matching `.d.mts` (ESM types) and `.d.ts` (CJS types).
   outExtension({ format }) {
-    return { js: format === 'cjs' ? '.cjs' : '.js' };
+    return { js: format === 'cjs' ? '.cjs' : '.mjs' };
   },
 });

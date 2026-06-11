@@ -126,7 +126,8 @@ describe('IdMapIndex.remove', () => {
     idx.addWithIds(vecs, ids);
 
     const removedPositions = new Set([5, 14, 0]);
-    for (const p of removedPositions) idx.remove(ids[p]);
+    // Positions are all < 15, the id-array length, so each lookup is in-bounds.
+    for (const p of removedPositions) idx.remove(ids[p]!);
 
     for (let i = 0; i < 15; i++) {
       if (removedPositions.has(i)) continue;
@@ -278,8 +279,12 @@ describe('IdMapIndex.write + load', () => {
     parts.push(Buffer.from('TVIM'));
     parts.push(Buffer.from([3])); // version
     parts.push(Buffer.from([4])); // bit_width
-    const d = Buffer.alloc(4); d.writeUInt32LE(12); parts.push(d); // dim=12
-    const n = Buffer.alloc(4); n.writeUInt32LE(2); parts.push(n); // n_vectors=2
+    const d = Buffer.alloc(4);
+    d.writeUInt32LE(12);
+    parts.push(d); // dim=12
+    const n = Buffer.alloc(4);
+    n.writeUInt32LE(2);
+    parts.push(n); // n_vectors=2
     parts.push(Buffer.alloc(8)); // (dim/8)*bw*n = 8 packed bytes
     parts.push(Buffer.alloc(8)); // 2 f32 scales
     parts.push(Buffer.alloc(4)); // n_calib = 0

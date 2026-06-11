@@ -116,7 +116,7 @@ describe('similarity search', () => {
     const scored = await store.similaritySearchWithScore('alpha', 3);
     const scores = scored.map(([, s]) => s);
     for (let i = 1; i < scores.length; i++) {
-      expect(scores[i - 1]).toBeGreaterThanOrEqual(scores[i]);
+      expect(scores[i - 1]!).toBeGreaterThanOrEqual(scores[i]!);
     }
   });
 
@@ -141,10 +141,10 @@ describe('similarity search', () => {
     const emb = new HashEmbeddings(DIM);
     const store = await TurbovecVectorStore.fromTexts(['alpha', 'beta', 'gamma'], {}, emb);
     const scored = await store.similaritySearchWithScore('alpha', 3);
-    expect(scored[0][0].pageContent).toBe('alpha');
+    expect(scored[0]![0].pageContent).toBe('alpha');
     const scores = scored.map(([, s]) => s);
     for (let i = 1; i < scores.length; i++) {
-      expect(scores[i - 1]).toBeGreaterThanOrEqual(scores[i]);
+      expect(scores[i - 1]!).toBeGreaterThanOrEqual(scores[i]!);
     }
   });
 
@@ -285,8 +285,8 @@ describe('upsert and dedup', () => {
       new Document({ id: 'x', pageContent: 'v2', metadata: { tag: 'new' } }),
     ]);
     const [doc] = store.getByIds(['x']);
-    expect(doc.metadata).toEqual({ tag: 'new' });
-    expect(doc.pageContent).toBe('v2');
+    expect(doc!.metadata).toEqual({ tag: 'new' });
+    expect(doc!.pageContent).toBe('v2');
   });
 
   it('re-ingesting an unchanged corpus is idempotent', async () => {
@@ -310,8 +310,8 @@ describe('upsert and dedup', () => {
     ];
     const metaRefs = docs.map((d) => d.metadata);
     await store.addDocuments(docs);
-    expect(docs[0].id).toBeUndefined();
-    expect(docs[1].id).toBe('explicit');
+    expect(docs[0]!.id).toBeUndefined();
+    expect(docs[1]!.id).toBe('explicit');
     expect(docs.map((d) => d.metadata)).toEqual(metaRefs);
   });
 
@@ -329,7 +329,7 @@ describe('upsert and dedup', () => {
     // Exactly one document; last occurrence wins.
     const found = store.getByIds(['dup']);
     expect(found.length).toBe(1);
-    expect(found[0].pageContent).toBe('beta');
+    expect(found[0]!.pageContent).toBe('beta');
     // No orphaned vector: only one result ever comes back.
     const results = await store.similaritySearch('dup', 10);
     expect(results.length).toBe(1);
@@ -357,11 +357,11 @@ describe('upsert and dedup', () => {
     ).rejects.toThrow();
     // Original data survives the failed upsert.
     const [doc] = store.getByIds(['my-id']);
-    expect(doc.pageContent).toBe('hello');
+    expect(doc!.pageContent).toBe('hello');
     // Still retrievable via search.
     const results = await store.similaritySearch('hello', 5);
     expect(results.length).toBe(1);
-    expect(results[0].id).toBe('my-id');
+    expect(results[0]!.id).toBe('my-id');
   });
 
   it('mismatched dim against an eager index raises', async () => {
