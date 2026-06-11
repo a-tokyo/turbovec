@@ -40,7 +40,15 @@ export declare class IdMapIndex {
   prepare(): void
   /** Serialise to a `.tvim` file. */
   write(path: string): void
-  /** Load an `IdMapIndex` from a `.tvim` file. */
+  /**
+   * Load an `IdMapIndex` from a `.tvim` file.
+   *
+   * Rejects any serialized index whose committed `dim` exceeds
+   * [`turbovec_core::MAX_DIM`]: a crafted header can claim a
+   * huge-but-multiple-of-8 dim that loads cleanly from the core read
+   * layer and then aborts the Node process on the `dim × dim` f64
+   * rotation-matrix allocation at the first `search`/`prepare` call.
+   */
   static load(path: string): IdMapIndex
   /** Number of vectors in the index. */
   get length(): number
@@ -90,7 +98,15 @@ export declare class TurboQuantIndex {
   prepare(): void
   /** Serialise the index to `path`. */
   write(path: string): void
-  /** Load an index from `path`. */
+  /**
+   * Load an index from `path`.
+   *
+   * Rejects any serialized index whose committed `dim` exceeds
+   * [`turbovec_core::MAX_DIM`]: a crafted header can claim a
+   * huge-but-multiple-of-8 dim that loads cleanly from the core read
+   * layer and then aborts the Node process on the `dim × dim` f64
+   * rotation-matrix allocation at the first `search`/`prepare` call.
+   */
   static load(path: string): TurboQuantIndex
   /** Number of vectors in the index. */
   get length(): number

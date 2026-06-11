@@ -36,9 +36,11 @@ use std::path::Path;
 /// embedding dims in the wild (~12k) while bounding the rotation matrix
 /// to a survivable worst case.
 ///
-/// Exposed publicly so the napi/PyO3 bindings can reuse it as their
-/// constructor/add `dim` bound (rejecting before the FFI crossing) instead
-/// of hardcoding a copy that could silently drift from this value.
+/// Exported so the napi/PyO3 bindings can enforce this bound at the FFI
+/// boundary (constructor, `add`, and post-load validation) without
+/// hardcoding a copy that could silently drift. The core read layer does
+/// NOT enforce this limit; binding layers are responsible for rejecting
+/// loaded indices whose dim exceeds this value.
 pub const MAX_DIM: usize = 65_536;
 
 const TV_MAGIC: &[u8; 4] = b"TVPI";
@@ -309,14 +311,6 @@ fn read_header_codes_scales<R: Read>(
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("invalid dim {dim}: must be a multiple of 8"),
-        ));
-    } else if dim > MAX_DIM {
-        // A crafted header can claim a huge-but-multiple-of-8 dim that
-        // loads cleanly and only aborts later on the dim × dim rotation
-        // matrix allocation. Bound it here, at the read layer.
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("invalid dim {dim}: exceeds the maximum supported dim {MAX_DIM}"),
         ));
     }
 

@@ -518,3 +518,59 @@ describe('IdMapIndex.addWithIds — SharedArrayBuffer input parity', () => {
     }
   });
 });
+
+// ── oversized-dim crafted file (node-side load guard) ─────────────────────
+//
+// A ~18-byte crafted .tvim header (valid magic/version, bit_width=4,
+// dim=1_048_576 which is a multiple of 8 but > MAX_DIM=65_536, n_vectors=0,
+// n_calib=0) used to load cleanly from the core read layer and then abort
+// the Node process on the dim × dim rotation-matrix at first search/prepare.
+// The node-side load guard must reject it with IO_ERROR.
+
+describe('IdMapIndex.load oversized-dim guard', () => {
+  function craftedOversizedTvim(): Buffer {
+    const parts: Buffer[] = [];
+    parts.push(Buffer.from('TVIM'));
+    parts.push(Buffer.from([3])); // version
+    parts.push(Buffer.from([4])); // bit_width
+    const dim = Buffer.alloc(4);
+    dim.writeUInt32LE(1_048_576); // 2^20 > MAX_DIM=65536, multiple of 8
+    parts.push(dim);
+    parts.push(Buffer.alloc(4)); // n_vectors = 0
+    parts.push(Buffer.alloc(4)); // n_calib = 0
+    // no slot_to_id entries needed (n_vectors=0)
+    return Buffer.concat(parts);
+  }
+
+  it('load rejects crafted oversized-dim .tvim with IO_ERROR — process survives', () => {
+    const tmpPath = path.join(os.tmpdir(), `turbovec-idmap-oversized-${Date.now()}.tvim`);
+    fs.writeFileSync(tmpPath, craftedOversizedTvim());
+    try {
+      expect(() => IdMapIndex.load(tmpPath)).toThrow();
+      try {
+        IdMapIndex.load(tmpPath);
+      } catch (e: any) {
+        expect(e.code).toBe('IO_ERROR');
+        expect(e.message).toMatch(/1048576/);
+        expect(e.message).toMatch(/65536/);
+      }
+    } finally {
+      if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+    }
+  });
+
+  it('load accepts a normal .tvim (dim == 64, within MAX_DIM)', () => {
+    const dim = 64;
+    const idx = new IdMapIndex(dim, 4);
+    idx.addWithIds(unitVectors(3, dim), BigUint64Array.from([1n, 2n, 3n]));
+    const tmpPath = path.join(os.tmpdir(), `turbovec-idmap-normal-${Date.now()}.tvim`);
+    try {
+      idx.write(tmpPath);
+      const loaded = IdMapIndex.load(tmpPath);
+      expect(loaded.dim).toBe(dim);
+      expect(loaded.length).toBe(3);
+    } finally {
+      if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+    }
+  });
+});

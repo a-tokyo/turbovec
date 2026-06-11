@@ -278,9 +278,26 @@ impl IdMapIndex {
     }
 
     /// Load an `IdMapIndex` from a `.tvim` file.
+    ///
+    /// Rejects any serialized index whose committed `dim` exceeds
+    /// [`turbovec_core::MAX_DIM`]: a crafted header can claim a
+    /// huge-but-multiple-of-8 dim that loads cleanly from the core read
+    /// layer and then aborts the Node process on the `dim × dim` f64
+    /// rotation-matrix allocation at the first `search`/`prepare` call.
     #[napi(factory)]
     pub fn load(path: String) -> napi::Result<Self, ErrCode> {
         let inner = turbovec_core::IdMapIndex::load(&path).map_err(|e| io_error(&e))?;
+        if let Some(dim) = inner.dim_opt() {
+            if dim > MAX_DIM {
+                return Err(io_error(&std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "index dim {dim} exceeds the maximum supported dim {MAX_DIM}; \
+                         the file may be malformed or crafted"
+                    ),
+                )));
+            }
+        }
         Ok(Self { inner })
     }
 

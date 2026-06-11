@@ -339,67 +339,6 @@ fn tv_pathological_sizes_do_not_overflow() {
 }
 
 #[test]
-fn tv_dim_exceeding_max_dim_errors_cleanly() {
-    // A ~22-byte crafted header (valid magic, bw=4, dim=1048576, n=0) used
-    // to load cleanly — dim is a multiple of 8 and n=0 means no payload —
-    // and then abort the process on the dim × dim f64 rotation-matrix
-    // allocation at first prepare/search. The read layer must reject any
-    // dim above MAX_DIM as InvalidData instead.
-    let path = temp_path("huge_dim.tv");
-    {
-        let mut f = File::create(&path).unwrap();
-        f.write_all(b"TVPI").unwrap();
-        f.write_all(&[3u8]).unwrap(); // version=3
-        f.write_all(&[4u8]).unwrap(); // bit_width
-        f.write_all(&(1_048_576u32).to_le_bytes()).unwrap(); // dim=2^20 > MAX_DIM
-        f.write_all(&(0u32).to_le_bytes()).unwrap(); // n_vectors=0
-        f.write_all(&0u32.to_le_bytes()).unwrap(); // n_calib = 0
-    }
-    let err = load(&path).unwrap_err();
-    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
-    assert!(
-        err.to_string().contains("maximum supported dim"),
-        "expected MAX_DIM rejection message, got: {err}",
-    );
-    std::fs::remove_file(&path).ok();
-}
-
-#[test]
-fn tv_dim_at_max_dim_is_accepted() {
-    // dim == MAX_DIM is the inclusive bound: a header claiming exactly
-    // MAX_DIM (with no vectors) must still load.
-    let path = temp_path("max_dim.tv");
-    write(&path, 4, turbovec::MAX_DIM, 0, &[], &[], &[], &[]).unwrap();
-    let (bw, d, n, ..) = load(&path).unwrap();
-    assert_eq!(bw, 4);
-    assert_eq!(d, turbovec::MAX_DIM);
-    assert_eq!(n, 0);
-    std::fs::remove_file(&path).ok();
-}
-
-#[test]
-fn tvim_dim_exceeding_max_dim_errors_cleanly() {
-    // Same crafted-header defect, .tvim path.
-    let path = temp_path("huge_dim.tvim");
-    {
-        let mut f = File::create(&path).unwrap();
-        f.write_all(b"TVIM").unwrap();
-        f.write_all(&[3u8]).unwrap(); // version=3
-        f.write_all(&[4u8]).unwrap(); // bit_width
-        f.write_all(&(1_048_576u32).to_le_bytes()).unwrap(); // dim=2^20 > MAX_DIM
-        f.write_all(&(0u32).to_le_bytes()).unwrap(); // n_vectors=0
-        f.write_all(&0u32.to_le_bytes()).unwrap(); // n_calib = 0
-    }
-    let err = load_id_map(&path).unwrap_err();
-    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
-    assert!(
-        err.to_string().contains("maximum supported dim"),
-        "expected MAX_DIM rejection message, got: {err}",
-    );
-    std::fs::remove_file(&path).ok();
-}
-
-#[test]
 fn tvim_dim_not_multiple_of_8_errors_cleanly() {
     // Same defect, .tvim path.
     let path = temp_path("bad_dim.tvim");

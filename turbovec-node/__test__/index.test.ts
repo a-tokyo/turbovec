@@ -498,6 +498,71 @@ describe('TurboQuantIndex numeric argument validation', () => {
   });
 });
 
+// ── oversized-dim crafted file (node-side load guard) ─────────────────────
+//
+// A ~18-byte crafted .tv header (valid magic/version, bit_width=4,
+// dim=1_048_576 which is a multiple of 8 but > MAX_DIM=65_536, n_vectors=0,
+// n_calib=0) used to load cleanly from the core read layer — dim is a valid
+// multiple-of-8 and there is no payload — and then abort the Node process on
+// the dim × dim f64 rotation-matrix allocation at the first search/prepare
+// call. The node-side load guard must reject it with IO_ERROR before handing
+// the index back to JS.
+
+describe('TurboQuantIndex.load oversized-dim guard', () => {
+  // Crafted file layout (v3 .tv, no vectors):
+  //   bytes  0-3 : TVPI magic
+  //   byte   4   : version = 3
+  //   byte   5   : bit_width = 4
+  //   bytes  6-9 : dim = 1_048_576 (LE u32)  ← multiple of 8, > MAX_DIM
+  //   bytes 10-13: n_vectors = 0 (LE u32)
+  //   bytes 14-17: n_calib = 0 (LE u32)
+  function craftedOversizedTv(): Buffer {
+    const parts: Buffer[] = [];
+    parts.push(Buffer.from('TVPI'));
+    parts.push(Buffer.from([3])); // version
+    parts.push(Buffer.from([4])); // bit_width
+    const dim = Buffer.alloc(4);
+    dim.writeUInt32LE(1_048_576); // 2^20 > MAX_DIM=65536, multiple of 8
+    parts.push(dim);
+    parts.push(Buffer.alloc(4)); // n_vectors = 0
+    parts.push(Buffer.alloc(4)); // n_calib = 0
+    return Buffer.concat(parts);
+  }
+
+  it('load rejects crafted oversized-dim .tv with IO_ERROR — process survives', () => {
+    const tmpPath = path.join(os.tmpdir(), `turbovec-oversized-${Date.now()}.tv`);
+    fs.writeFileSync(tmpPath, craftedOversizedTv());
+    try {
+      expect(() => TurboQuantIndex.load(tmpPath)).toThrow();
+      try {
+        TurboQuantIndex.load(tmpPath);
+      } catch (e: any) {
+        expect(e.code).toBe('IO_ERROR');
+        // Message should identify the dim and the bound.
+        expect(e.message).toMatch(/1048576/);
+        expect(e.message).toMatch(/65536/);
+      }
+    } finally {
+      if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+    }
+  });
+
+  it('load accepts a normal .tv (dim == 64, within MAX_DIM)', () => {
+    const dim = 64;
+    const idx = new TurboQuantIndex(dim, 4);
+    idx.add(unitVectors(5, dim));
+    const tmpPath = path.join(os.tmpdir(), `turbovec-normal-${Date.now()}.tv`);
+    try {
+      idx.write(tmpPath);
+      const loaded = TurboQuantIndex.load(tmpPath);
+      expect(loaded.dim).toBe(dim);
+      expect(loaded.length).toBe(5);
+    } finally {
+      if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+    }
+  });
+});
+
 // ── SharedArrayBuffer regression (TOCTOU snapshot on add) ────────────────
 //
 // The add path snapshots the Float32Array to an owned Vec<f32> before
