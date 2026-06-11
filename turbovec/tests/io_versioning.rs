@@ -235,6 +235,135 @@ fn tv_v3_invalid_n_calib_errors_cleanly() {
 }
 
 #[test]
+fn tv_dim_not_multiple_of_8_errors_cleanly() {
+    // Reproduces the FFI-abort defect: a header with dim not a multiple of
+    // 8 makes the read layer's `(dim/8)*bit_width*n_vectors` formula
+    // disagree with `from_parts`'s `n_vectors*dim*bit_width/8`, tripping an
+    // assert. The read layer must now reject it as InvalidData first.
+    let path = temp_path("bad_dim.tv");
+    {
+        let mut f = File::create(&path).unwrap();
+        f.write_all(b"TVPI").unwrap();
+        f.write_all(&[3u8]).unwrap(); // version=3
+        f.write_all(&[4u8]).unwrap(); // bit_width
+        f.write_all(&(12u32).to_le_bytes()).unwrap(); // dim=12 (not a multiple of 8)
+        f.write_all(&(2u32).to_le_bytes()).unwrap(); // n_vectors
+        // (dim/8)*bit_width*n_vectors = 1*4*2 = 8 packed bytes.
+        f.write_all(&[0u8; 8]).unwrap();
+        f.write_all(&[0u8; 8]).unwrap(); // 2 f32 scales
+        f.write_all(&0u32.to_le_bytes()).unwrap(); // n_calib = 0
+    }
+    let err = load(&path).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(
+        err.to_string().contains("multiple of 8"),
+        "expected 'multiple of 8' in message, got: {err}",
+    );
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn tv_lazy_header_with_nonzero_n_errors_cleanly() {
+    // A lazy header (dim=0) must have n_vectors=0; otherwise `from_parts`
+    // would assert. Read layer rejects it as InvalidData.
+    let path = temp_path("lazy_bad_n.tv");
+    {
+        let mut f = File::create(&path).unwrap();
+        f.write_all(b"TVPI").unwrap();
+        f.write_all(&[3u8]).unwrap(); // version=3
+        f.write_all(&[4u8]).unwrap(); // bit_width
+        f.write_all(&(0u32).to_le_bytes()).unwrap(); // dim=0 (lazy)
+        f.write_all(&(3u32).to_le_bytes()).unwrap(); // n_vectors=3 (invalid for lazy)
+        // (dim/8)*bit_width*n_vectors = 0 packed bytes.
+        f.write_all(&[0u8; 12]).unwrap(); // 3 f32 scales
+        f.write_all(&0u32.to_le_bytes()).unwrap(); // n_calib = 0
+    }
+    let err = load(&path).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(
+        err.to_string().contains("n_vectors=0"),
+        "expected lazy n_vectors message, got: {err}",
+    );
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn tv_invalid_bit_width_errors_cleanly() {
+    // bit_width must be 2, 3, or 4.
+    let path = temp_path("bad_bw.tv");
+    {
+        let mut f = File::create(&path).unwrap();
+        f.write_all(b"TVPI").unwrap();
+        f.write_all(&[3u8]).unwrap(); // version=3
+        f.write_all(&[7u8]).unwrap(); // bit_width=7 (invalid)
+        f.write_all(&(32u32).to_le_bytes()).unwrap(); // dim
+        f.write_all(&(1u32).to_le_bytes()).unwrap(); // n_vectors
+        f.write_all(&[0u8; 64]).unwrap(); // padding (read fails after bw check anyway)
+    }
+    let err = load(&path).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(
+        err.to_string().contains("bit_width"),
+        "expected 'bit_width' in message, got: {err}",
+    );
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn tv_pathological_sizes_do_not_overflow() {
+    // A crafted header with huge dim and n_vectors must error rather than
+    // wrap the packed-bytes computation or attempt a giant allocation.
+    let path = temp_path("overflow.tv");
+    {
+        let mut f = File::create(&path).unwrap();
+        f.write_all(b"TVPI").unwrap();
+        f.write_all(&[3u8]).unwrap(); // version=3
+        f.write_all(&[4u8]).unwrap(); // bit_width
+        f.write_all(&(0xFFFF_FFF8u32).to_le_bytes()).unwrap(); // dim ~4e9, multiple of 8
+        f.write_all(&(0xFFFF_FFFFu32).to_le_bytes()).unwrap(); // n_vectors ~4e9
+        f.write_all(&[0u8; 16]).unwrap(); // a little payload
+    }
+    // The crafted dim/n product is gigantic but still fits in usize, so the
+    // plain overflow check passes; the incremental read must cap memory and
+    // surface a clean EOF (or InvalidData) instead of aborting on a giant
+    // allocation. Reaching this assertion at all proves the process survived.
+    let err = load(&path).unwrap_err();
+    assert!(
+        matches!(
+            err.kind(),
+            std::io::ErrorKind::UnexpectedEof | std::io::ErrorKind::InvalidData
+        ),
+        "expected clean error, got: {err}",
+    );
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn tvim_dim_not_multiple_of_8_errors_cleanly() {
+    // Same defect, .tvim path.
+    let path = temp_path("bad_dim.tvim");
+    {
+        let mut f = File::create(&path).unwrap();
+        f.write_all(b"TVIM").unwrap();
+        f.write_all(&[3u8]).unwrap(); // version=3
+        f.write_all(&[4u8]).unwrap(); // bit_width
+        f.write_all(&(12u32).to_le_bytes()).unwrap(); // dim=12 (not a multiple of 8)
+        f.write_all(&(2u32).to_le_bytes()).unwrap(); // n_vectors
+        f.write_all(&[0u8; 8]).unwrap(); // packed
+        f.write_all(&[0u8; 8]).unwrap(); // 2 f32 scales
+        f.write_all(&0u32.to_le_bytes()).unwrap(); // n_calib = 0
+        f.write_all(&[0u8; 16]).unwrap(); // 2 u64 ids
+    }
+    let err = load_id_map(&path).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(
+        err.to_string().contains("multiple of 8"),
+        "expected 'multiple of 8' in message, got: {err}",
+    );
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
 fn tv_garbage_file_rejected_without_upgrade_hint() {
     let path = temp_path("garbage.tv");
     {

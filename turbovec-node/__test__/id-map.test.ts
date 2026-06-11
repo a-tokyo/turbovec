@@ -268,6 +268,35 @@ describe('IdMapIndex.write + load', () => {
       expect(e.code).toBe('IO_ERROR');
     }
   });
+
+  // Regression: a malformed .tvim (dim not a multiple of 8) used to trip an
+  // internal assert in the core, aborting the whole Node process (SIGABRT)
+  // across the napi FFI boundary. The core now validates the header and
+  // returns an io::Error mapped to IO_ERROR. Test completion proves survival.
+  it('load malformed .tvim (dim not multiple of 8) throws IO_ERROR — process survives', () => {
+    const parts: Buffer[] = [];
+    parts.push(Buffer.from('TVIM'));
+    parts.push(Buffer.from([3])); // version
+    parts.push(Buffer.from([4])); // bit_width
+    const d = Buffer.alloc(4); d.writeUInt32LE(12); parts.push(d); // dim=12
+    const n = Buffer.alloc(4); n.writeUInt32LE(2); parts.push(n); // n_vectors=2
+    parts.push(Buffer.alloc(8)); // (dim/8)*bw*n = 8 packed bytes
+    parts.push(Buffer.alloc(8)); // 2 f32 scales
+    parts.push(Buffer.alloc(4)); // n_calib = 0
+    parts.push(Buffer.alloc(16)); // 2 u64 ids
+    const tmpPath = path.join(os.tmpdir(), `turbovec-idmap-malformed-${Date.now()}.tvim`);
+    fs.writeFileSync(tmpPath, Buffer.concat(parts));
+    try {
+      expect(() => IdMapIndex.load(tmpPath)).toThrow();
+      try {
+        IdMapIndex.load(tmpPath);
+      } catch (e: any) {
+        expect(e.code).toBe('IO_ERROR');
+      }
+    } finally {
+      fs.unlinkSync(tmpPath);
+    }
+  });
 });
 
 // ── query finiteness pre-validation (regression for SIGABRT bug) ──────────

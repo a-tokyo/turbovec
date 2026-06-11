@@ -333,6 +333,36 @@ describe('TurboQuantIndex.prepare + write + load', () => {
       expect(e.code).toBe('IO_ERROR');
     }
   });
+
+  // Regression: a malformed .tv (dim not a multiple of 8) used to trip an
+  // internal assert in the core, panicking and ABORTING the whole Node
+  // process (SIGABRT) across the napi FFI boundary. The core now validates
+  // the header at the read layer and returns an io::Error, mapped to
+  // IO_ERROR here. The test running to completion proves the process did
+  // not abort.
+  it('load malformed .tv (dim not multiple of 8) throws IO_ERROR — process survives', () => {
+    const parts: Buffer[] = [];
+    parts.push(Buffer.from('TVPI'));
+    parts.push(Buffer.from([3])); // version
+    parts.push(Buffer.from([4])); // bit_width
+    const d = Buffer.alloc(4); d.writeUInt32LE(12); parts.push(d); // dim=12
+    const n = Buffer.alloc(4); n.writeUInt32LE(2); parts.push(n); // n_vectors=2
+    parts.push(Buffer.alloc(8)); // (dim/8)*bw*n = 1*4*2 = 8 packed bytes
+    parts.push(Buffer.alloc(8)); // 2 f32 scales
+    parts.push(Buffer.alloc(4)); // n_calib = 0
+    const tmpPath = path.join(os.tmpdir(), `turbovec-malformed-${Date.now()}.tv`);
+    fs.writeFileSync(tmpPath, Buffer.concat(parts));
+    try {
+      expect(() => TurboQuantIndex.load(tmpPath)).toThrow();
+      try {
+        TurboQuantIndex.load(tmpPath);
+      } catch (e: any) {
+        expect(e.code).toBe('IO_ERROR');
+      }
+    } finally {
+      fs.unlinkSync(tmpPath);
+    }
+  });
 });
 
 // ── query finiteness pre-validation (regression for SIGABRT bug) ──────────

@@ -160,7 +160,10 @@ pub fn load_id_map(
     let (bit_width, dim, n_vectors, packed_codes, scales, tqplus_shift, tqplus_scale) =
         read_core_versioned(&mut f, version[0], TVIM_VERSION, ".tvim")?;
 
-    let mut slot_to_id = Vec::with_capacity(n_vectors);
+    // Do not pre-reserve `n_vectors` capacity: a crafted header could
+    // claim a huge count. `read_exact` will fail on a short file long
+    // before the Vec grows beyond the bytes actually present.
+    let mut slot_to_id = Vec::new();
     let mut buf = [0u8; 8];
     for _ in 0..n_vectors {
         f.read_exact(&mut buf)?;
@@ -268,17 +271,79 @@ fn read_header_codes_scales<R: Read>(
     let dim = u32::from_le_bytes([header[1], header[2], header[3], header[4]]) as usize;
     let n_vectors = u32::from_le_bytes([header[5], header[6], header[7], header[8]]) as usize;
 
-    let packed_bytes = (dim / 8) * bit_width * n_vectors;
-    let mut packed_codes = vec![0u8; packed_bytes];
-    r.read_exact(&mut packed_codes)?;
+    // Validate the header invariants that `from_parts` asserts on, here at
+    // the read layer (mirroring the magic / version / n_calib checks
+    // above). A malformed file must surface a catchable `InvalidData`
+    // error, never trip an assert that would panic across an FFI boundary.
+    if !matches!(bit_width, 2 | 3 | 4) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid bit_width {bit_width}: must be 2, 3, or 4"),
+        ));
+    }
+    if dim == 0 {
+        // Lazy/uncommitted index — a persisted lazy index has no vectors.
+        if n_vectors != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid header: dim=0 (lazy) requires n_vectors=0, got {n_vectors}"),
+            ));
+        }
+    } else if dim % 8 != 0 {
+        // Eager indices always store dim as a positive multiple of 8.
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid dim {dim}: must be a multiple of 8"),
+        ));
+    }
+
+    // Guard the allocation size against integer overflow / pathological
+    // crafted headers (e.g. dim≈4e9, n_vectors≈4e9) so we error instead
+    // of wrapping or attempting a huge allocation.
+    let packed_bytes = (dim / 8)
+        .checked_mul(bit_width)
+        .and_then(|x| x.checked_mul(n_vectors))
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid header: packed code length overflows usize",
+            )
+        })?;
+    let packed_codes = read_exact_vec(r, packed_bytes)?;
 
     let scales = read_f32_array(r, n_vectors)?;
     Ok((bit_width, dim, n_vectors, packed_codes, scales))
 }
 
+/// Read exactly `len` bytes into a fresh `Vec`, growing the buffer as
+/// bytes actually arrive rather than pre-allocating `len` up front. A
+/// crafted header can declare a `len` of many exabytes that still fits in
+/// `usize` (so a plain overflow check passes) — pre-allocating it would
+/// abort the process with an allocation failure. Reading incrementally
+/// caps memory at the bytes the file actually contains and surfaces a
+/// clean `UnexpectedEof` on a short/truncated file.
+fn read_exact_vec<R: Read>(r: &mut R, len: usize) -> io::Result<Vec<u8>> {
+    let mut buf = Vec::new();
+    let read = r.take(len as u64).read_to_end(&mut buf)?;
+    if read != len {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            format!("expected {len} bytes, file ended after {read}"),
+        ));
+    }
+    Ok(buf)
+}
+
 fn read_f32_array<R: Read>(r: &mut R, n: usize) -> io::Result<Vec<f32>> {
-    let mut bytes = vec![0u8; n * 4];
-    r.read_exact(&mut bytes)?;
+    // Guard against overflow when sizing the byte buffer for crafted
+    // headers with a pathological element count.
+    let byte_len = n.checked_mul(4).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid header: f32 array length overflows usize",
+        )
+    })?;
+    let bytes = read_exact_vec(r, byte_len)?;
     Ok(bytes
         .chunks_exact(4)
         .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
