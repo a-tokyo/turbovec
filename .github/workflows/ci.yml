@@ -181,21 +181,25 @@ jobs:
         if: runner.os == 'Linux' && matrix.os == 'ubuntu-latest'
         shell: bash
         run: |
-          rm -rf dist
+          set -euo pipefail
+          rm -rf dist /tmp/tvfiles
+          mkdir -p /tmp/tvfiles
           npm run build:ts
-          # --ignore-scripts: dist/ is already built above; skip the prepack
-          # rebuild so its tsup output can't contaminate the --json stream.
-          FILES=$(npm pack --dry-run --json --ignore-scripts | node -e "
-            const data = JSON.parse(require('fs').readFileSync(0, 'utf8'));
-            const names = data[0].files.map(f => f.path);
-            process.stdout.write(names.join('\n'));
-          ")
+          # Pack for real to a dir and read the tarball's own entry list with
+          # `tar`, rather than parsing `npm pack --json` stdout — lifecycle
+          # script output (prepack, etc.) can contaminate that stream. tar
+          # entries are prefixed `package/`; strip it to compare against the
+          # files-field paths. --ignore-scripts: dist/ is already built above.
+          npm pack --pack-destination /tmp/tvfiles --ignore-scripts >/dev/null
+          TARBALL=$(ls /tmp/tvfiles/*.tgz)
+          FILES=$(tar -tzf "$TARBALL" | sed 's#^package/##')
           echo "$FILES"
           for f in \
             dist/langchain.mjs dist/langchain.cjs dist/langchain.d.ts dist/langchain.d.mts \
             dist/llamaindex.mjs dist/llamaindex.cjs dist/llamaindex.d.ts dist/llamaindex.d.mts; do
             echo "$FILES" | grep -qx "$f" || { echo "::error::missing $f in npm pack tarball"; exit 1; }
           done
+          rm -rf /tmp/tvfiles
           echo "ok: dist/{langchain,llamaindex}.{mjs,cjs,d.ts,d.mts} present in tarball"
 
       # Exercise the PUBLISHED package shape end-to-end — the blind spot that let
@@ -212,16 +216,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf dist
+          rm -rf dist /tmp/tvpack
+          mkdir -p /tmp/tvpack
           npm run build:ts
-          # --ignore-scripts: dist/ already built; skip prepack so its build:ts
-          # stdout can't corrupt the --json tarball-name parse.
-          TARBALL=$(npm pack --pack-destination /tmp/tvpack --ignore-scripts --json \
-            | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(0,'utf8'))[0].filename)")
+          # Pack to a dir and resolve the tarball with `ls`, rather than parsing
+          # `npm pack --json` stdout — lifecycle script output can contaminate
+          # that stream. --ignore-scripts: dist/ already built above.
+          npm pack --pack-destination /tmp/tvpack --ignore-scripts >/dev/null
+          TARBALL=$(ls /tmp/tvpack/*.tgz)
           CONSUMER=/tmp/tvpack/consumer
           mkdir -p "$CONSUMER"
           ( cd "$CONSUMER" && npm init -y >/dev/null \
-            && npm install "/tmp/tvpack/$TARBALL" @langchain/core @llamaindex/core >/dev/null )
+            && npm install "$TARBALL" @langchain/core @llamaindex/core >/dev/null )
           # Make the native binding resolvable (no published platform dep yet).
           cp ./*.node "$CONSUMER/node_modules/turbovec/"
           ( cd "$CONSUMER" && node -e "require('turbovec'); require('turbovec/langchain'); require('turbovec/llamaindex'); console.log('CJS subpaths resolve')" )

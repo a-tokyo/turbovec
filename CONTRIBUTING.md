@@ -86,24 +86,8 @@ Coverage is instrumented with `@vitest/coverage-v8` scoped to `ts/**` only
 
 Raise the thresholds in `vitest.config.ts` when coverage genuinely improves.
 
-### Pre-commit hook
-
-`npm install` inside `turbovec-node/` wires a [husky v9](https://typicode.github.io/husky/)
-pre-commit hook automatically via the `prepare` script. The hook runs:
-
-```
-format:check → lint → typecheck
-```
-
-Tests are intentionally excluded — they require the native addon to be built
-and are covered in CI.
-
-The hook **only fires when staged files include paths under `turbovec-node/`**.
-Commits that touch only Rust sources, Python, or docs skip the Node.js checks
-entirely (the hook exits 0 immediately).
-
-To re-wire the hook after a fresh clone, run `npm install` inside
-`turbovec-node/` — no manual `husky` command is needed.
+These checks (format, lint, typecheck, tests, coverage) are enforced in CI on
+every pull request; run them locally before pushing.
 
 The `@langchain/core` and `@llamaindex/core` integration peers are installed
 as dev dependencies, so their test suites run out of the box after

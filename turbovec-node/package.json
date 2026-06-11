@@ -82,8 +82,7 @@
     "pretest:coverage": "npm run build && npm run build:ts",
     "test:coverage": "vitest run --coverage",
     "prepack": "npm run build:ts",
-    "prepublishOnly": "napi prepublish -t npm",
-    "prepare": "cd .. && husky turbovec-node/.husky"
+    "prepublishOnly": "napi prepublish -t npm"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -94,7 +93,6 @@
     "@vitest/coverage-v8": "2.1.9",
     "eslint": "^10.4.1",
     "eslint-config-prettier": "^10.1.8",
-    "husky": "9.1.7",
     "prettier": "^3.8.4",
     "tsup": "^8.5.1",
     "typescript": "^5",
