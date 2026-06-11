@@ -1,0 +1,21 @@
+{
+  "name": "turbovec",
+  "version": "0.1.0",
+  "description": "Fast vector quantization with 2-4 bit compression and SIMD search — Node.js native addon",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "napi": {
+    "binaryName": "turbovec"
+  },
+  "scripts": {
+    "build": "napi build --platform --release",
+    "pretest": "npm run build",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3",
+    "@types/node": "^22.19.21",
+    "typescript": "^5",
+    "vitest": "^2"
+  }
+}

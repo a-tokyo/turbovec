@@ -1,0 +1,6 @@
+*.node
+target/
+node_modules/
+dist/
+.gates.md
+*.tgz
