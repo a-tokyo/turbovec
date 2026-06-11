@@ -526,6 +526,24 @@ describe('query docIds', () => {
 // ── Unsupported query mode ───────────────────────────────────────────────────
 
 describe('unsupported query mode', () => {
+  it('query with mode === undefined is treated as DEFAULT (no throw)', async () => {
+    // VectorStoreQuery.mode is typed as required, but a JS caller or an older
+    // framework version may omit it (the field is absent / undefined at
+    // runtime). The store should treat that as DEFAULT rather than throwing
+    // TurbovecQueryModeUnsupportedError. We cast to bypass TS's required-field
+    // check so we can exercise the runtime code path.
+    const store = new TurbovecVectorStore();
+    await store.add(['hello', 'world'].map((t) => makeNode(t)));
+    const queryNoMode = {
+      queryEmbedding: hashEmbed('hello', DIM),
+      similarityTopK: 2,
+      // mode intentionally absent
+    } as unknown as VectorStoreQuery;
+    const res = await store.query(queryNoMode);
+    expect(res.ids.length).toBeGreaterThan(0);
+    expect(res.nodes?.length).toBeGreaterThan(0);
+  });
+
   it('throws the typed error with .code for MMR', async () => {
     const store = new TurbovecVectorStore();
     await store.add([makeNode('a')]);

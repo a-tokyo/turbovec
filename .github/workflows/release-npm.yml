@@ -311,7 +311,7 @@ jobs:
             if [ "$NPM_EXIT" -eq 0 ]; then
               echo "publish=false" >> "$GITHUB_OUTPUT"
               echo "Skipping: $NAME@$VER already exists on npm"
-            elif echo "$NPM_OUT" | grep -qiE 'E404|not found|code E404'; then
+            elif echo "$NPM_OUT" | grep -qiE 'E404|code E404|404 Not Found'; then
               # Definitive 404 → version not yet published.
               echo "publish=true" >> "$GITHUB_OUTPUT"
               echo "version=$VER" >> "$GITHUB_OUTPUT"

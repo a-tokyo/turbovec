@@ -79,6 +79,7 @@
     "format:check": "prettier --check .",
     "pretest": "npm run build && npm run build:ts",
     "test": "vitest run",
+    "pretest:coverage": "npm run build && npm run build:ts",
     "test:coverage": "vitest run --coverage",
     "prepack": "npm run build:ts",
     "prepublishOnly": "napi prepublish -t npm",
@@ -98,7 +99,7 @@
     "tsup": "^8.5.1",
     "typescript": "^5",
     "typescript-eslint": "^8.61.0",
-    "vitest": "^2"
+    "vitest": "2.1.9"
   },
   "peerDependencies": {
     "@langchain/core": ">=1 <2",

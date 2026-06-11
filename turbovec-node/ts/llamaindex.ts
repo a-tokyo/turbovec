@@ -351,7 +351,7 @@ export class TurbovecVectorStore extends BaseVectorStore {
    * filtered set.
    */
   async query(query: VectorStoreQuery, _options?: object): Promise<VectorStoreQueryResult> {
-    if (query.mode !== VectorStoreQueryMode.DEFAULT) {
+    if (query.mode !== undefined && query.mode !== VectorStoreQueryMode.DEFAULT) {
       throw new TurbovecQueryModeUnsupportedError(unsupportedModeMsg(query.mode));
     }
     if (query.queryEmbedding === undefined || query.queryEmbedding.length === 0) {
