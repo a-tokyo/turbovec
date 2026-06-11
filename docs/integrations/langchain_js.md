@@ -41,12 +41,19 @@ import { TurbovecVectorStore } from "turbovec/langchain";
 const store = new TurbovecVectorStore(embeddings);
 
 // fromTexts / fromDocuments: same lazy behaviour, plus immediate ingest.
-const store2 = await TurbovecVectorStore.fromTexts(texts, metadatas, embeddings, {
-  bitWidth: 4,
-});
+const store2 = await TurbovecVectorStore.fromTexts(
+  texts,
+  metadatas,
+  embeddings,
+  {
+    bitWidth: 4,
+  },
+);
 
 // Pre-built index: bring your own IdMapIndex (e.g. one loaded from disk).
-const store3 = new TurbovecVectorStore(embeddings, { index: new IdMapIndex(1536, 4) });
+const store3 = new TurbovecVectorStore(embeddings, {
+  index: new IdMapIndex(1536, 4),
+});
 ```
 
 `bitWidth` is `2`, `3`, or `4` and is fixed once the index is created.
@@ -95,7 +102,17 @@ const qvec = await embeddings.embedQuery("...");
 const byVec = await store.similaritySearchVectorWithScore(qvec, 5);
 ```
 
-`similaritySearchWithScore` returns **raw cosine scores** in `[-1, 1]` (possibly slightly outside that range due to quantization noise) — the LangChain.js convention for `similaritySearchVectorWithScore` is to return raw scores, matching the Python store's `_search_vector`. To get remapped relevance scores in `[0, 1]`, use `similaritySearchWithRelevanceScores`; the base class calls `_selectRelevanceScoreFn()` (which maps `(sim+1)/2` and clamps to `[0, 1]`) on that path automatically.
+`similaritySearchWithScore` returns **raw cosine scores** in `[-1, 1]` (possibly slightly outside that range due to quantization noise) — the LangChain.js convention for `similaritySearchVectorWithScore` is to return raw scores, matching the Python store's `_search_vector`. To get normalized relevance scores in `[0, 1]`, call `similaritySearchWithRelevanceScores` — this is a first-class method on `TurbovecVectorStore` (not inherited from the base class, since `@langchain/core` v1 removed it from `VectorStore`). It embeds the query, calls `similaritySearchVectorWithScore`, and maps each raw score through `_selectRelevanceScoreFn()` (`(sim+1)/2`, clamped to `[0, 1]`).
+
+```ts
+const docsWithRelevance = await store.similaritySearchWithRelevanceScores(
+  "what is turbovec?",
+  5,
+);
+for (const [doc, relevance] of docsWithRelevance) {
+  console.log(relevance, doc.pageContent); // relevance ∈ [0, 1]
+}
+```
 
 ## Document retrieval by id
 
@@ -119,7 +136,10 @@ Delete is O(1) per id.
 
 ```ts
 // Record — AND of exact equality on Document.metadata.
-const a = await store.similaritySearch("query", 5, { source: "manual", version: 2 });
+const a = await store.similaritySearch("query", 5, {
+  source: "manual",
+  version: 2,
+});
 
 // Callable — predicate over the full Document (id / pageContent / metadata).
 const b = await store.similaritySearch(

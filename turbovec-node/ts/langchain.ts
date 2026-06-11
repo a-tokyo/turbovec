@@ -286,9 +286,11 @@ export class TurbovecVectorStore extends VectorStore {
    * (possibly slightly outside due to quantization noise). LangChain's base
    * class calls this method verbatim from `similaritySearchWithScore`, so
    * returning raw scores here is the convention. Relevance remapping
-   * (`(sim+1)/2` → `[0,1]`) is applied only on the separate
-   * `similaritySearchWithRelevanceScores` path, which the base class handles
-   * by calling `_selectRelevanceScoreFn()` itself.
+   * (`(sim+1)/2` → `[0,1]`) is applied by the explicit
+   * `similaritySearchWithRelevanceScores` override below (note: @langchain/core
+   * v1 dropped the `similaritySearchWithRelevanceScores` path from the base
+   * class, so this store provides it as a first-class method and is the only
+   * caller of `_selectRelevanceScoreFn()`).
    *
    * Mirrors the Python store's `_search_vector` which returns `float(score)`
    * (raw cosine, no remapping).
@@ -338,11 +340,32 @@ export class TurbovecVectorStore extends VectorStore {
         pageContent: entry.text,
         metadata: { ...entry.metadata },
       });
-      // Return the raw native score; relevance remapping is the base class's
-      // concern on the `similaritySearchWithRelevanceScores` path.
+      // Return the raw native score; relevance remapping is applied by the
+      // explicit similaritySearchWithRelevanceScores override below.
       out.push([doc, result.scores[i]!]);
     }
     return out;
+  }
+
+  /**
+   * Search by a string query and return `[Document, relevanceScore]` tuples
+   * where `relevanceScore` is remapped to `[0, 1]` via `_selectRelevanceScoreFn()`.
+   *
+   * This is an explicit first-class override required because `@langchain/core`
+   * v1 removed `similaritySearchWithRelevanceScores` from the `VectorStore` base
+   * class. `_selectRelevanceScoreFn()` maps raw cosine similarity `sim` to
+   * `(sim + 1) / 2`, clamped to `[0, 1]`, mirroring the Python store's
+   * relevance convention.
+   */
+  async similaritySearchWithRelevanceScores(
+    query: string,
+    k = 4,
+    filter?: FilterType,
+  ): Promise<[DocumentInterface, number][]> {
+    const embedded = await this.embeddings.embedQuery(query);
+    const raw = await this.similaritySearchVectorWithScore(embedded, k, filter);
+    const relevanceFn = this._selectRelevanceScoreFn();
+    return raw.map(([doc, score]) => [doc, relevanceFn(score)]);
   }
 
   private compileFilter(filter: FilterType): (doc: DocumentInterface) => boolean {

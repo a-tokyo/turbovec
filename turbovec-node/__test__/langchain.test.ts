@@ -219,6 +219,58 @@ describe('relevance scores', () => {
   });
 });
 
+// ── similaritySearchWithRelevanceScores ───────────────────────────────────
+
+describe('similaritySearchWithRelevanceScores', () => {
+  // Regression guard: the method must exist as a first-class member (not
+  // inherited from the base class, which dropped it in @langchain/core v1).
+  it('method exists on the store instance', async () => {
+    const emb = newEmb();
+    const store = await TurbovecVectorStore.fromTexts(['a'], {}, emb);
+    expect(typeof store.similaritySearchWithRelevanceScores).toBe('function');
+  });
+
+  it('returns results with scores in [0, 1]', async () => {
+    const emb = new HashEmbeddings(DIM);
+    const store = await TurbovecVectorStore.fromTexts(['alpha', 'beta', 'gamma'], {}, emb);
+    const results = await store.similaritySearchWithRelevanceScores('alpha', 3);
+    expect(results.length).toBeGreaterThan(0);
+    for (const [doc, score] of results) {
+      expect(typeof doc.pageContent).toBe('string');
+      expect(score).toBeGreaterThanOrEqual(0);
+      expect(score).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('ranking order matches similaritySearchWithScore (same docs, same order)', async () => {
+    const emb = new HashEmbeddings(DIM);
+    const store = await TurbovecVectorStore.fromTexts(['alpha', 'beta', 'gamma'], {}, emb);
+    const withScore = await store.similaritySearchWithScore('alpha', 3);
+    const withRelevance = await store.similaritySearchWithRelevanceScores('alpha', 3);
+    // Same number of results.
+    expect(withRelevance.length).toBe(withScore.length);
+    // Same doc order (page content must match positionally).
+    for (let i = 0; i < withScore.length; i++) {
+      expect(withRelevance[i]![0].pageContent).toBe(withScore[i]![0].pageContent);
+    }
+    // Relevance scores must be non-increasing (same ordering contract as raw scores).
+    const relScores = withRelevance.map(([, s]) => s);
+    for (let i = 1; i < relScores.length; i++) {
+      expect(relScores[i - 1]!).toBeGreaterThanOrEqual(relScores[i]!);
+    }
+  });
+
+  it('near-identical self-match produces relevance score close to 1', async () => {
+    const emb = new HashEmbeddings(DIM);
+    const store = await TurbovecVectorStore.fromTexts(['alpha', 'beta', 'gamma'], {}, emb);
+    const results = await store.similaritySearchWithRelevanceScores('alpha', 3);
+    // Top result should be alpha itself with a high relevance score.
+    expect(results[0]![0].pageContent).toBe('alpha');
+    // self-match: raw cosine ≈ 1 (quantization may nudge it slightly), so relevance ≈ 1.
+    expect(results[0]![1]).toBeGreaterThan(0.9);
+  });
+});
+
 // ── Filters ───────────────────────────────────────────────────────────────
 
 describe('filters', () => {

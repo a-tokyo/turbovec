@@ -104,6 +104,8 @@ try {
 }
 ```
 
+Note: the constructor throws `DIM_NOT_POSITIVE_MULTIPLE_OF_8` (e.g. `new TurboQuantIndex(7)`), while a lazy first-add with a non-multiple-of-8 dim throws `DIM_NOT_MULTIPLE_OF_8` — catch the right code per path.
+
 See [`docs/api.md`](https://github.com/RyanCodrai/turbovec/blob/main/docs/api.md) for the full error-code table and the JS contracts (flat-buffer layout, result shapes, lazy-dim rules).
 
 ## Framework integrations
