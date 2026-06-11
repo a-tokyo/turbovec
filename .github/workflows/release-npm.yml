@@ -1,0 +1,341 @@
+# Release (npm)
+#
+# Fires on every push to main and on workflow_dispatch.
+# A "determine whether to publish" guard step makes it idempotent:
+#   - skips publish if package.json version is 0.0.0 (placeholder)
+#   - skips publish if that version already exists on npm
+# So merging a version bump to main is the ONLY trigger that actually publishes.
+#
+# Publishing is gated on a real (non-0.0.0) version; the owner bumps
+# turbovec-node to e.g. 0.1.0 (root + the four npm/<target>/package.json +
+# optionalDependencies, e.g. via `napi version`) to cut the first release.
+#
+# Architecture:
+#   1. Four parallel build jobs (native runners) compile a .node per platform.
+#      Linux targets set TURBOVEC_STATIC_BLAS=1 so the .node bundles OpenBLAS
+#      statically — no libopenblas.so required on end-user Linux boxes.
+#   2. A single `release` job (main-ref-gated) downloads all artifacts,
+#      then npm publish triggers the prepublishOnly hook (napi prepublish -t npm)
+#      exactly once to populate the npm/ platform-package directories, creates a
+#      GitHub release, and publishes the platform packages + root to npm.
+#
+# Auth: NODE_AUTH_TOKEN (NPM_TOKEN secret). OIDC trusted publishing is the
+# eventual upgrade — id-token permission is already reserved here.
+
+name: Release (npm)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write  # reserved for future OIDC trusted publishing
+
+jobs:
+  # ── Per-platform native .node builds ────────────────────────────────────────
+
+  build-linux-x64:
+    name: Build linux-x64
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: turbovec-node
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install OpenBLAS + gfortran
+        run: sudo apt-get update && sudo apt-get install -y libopenblas-dev libopenblas-pthread-dev gfortran
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build .node (static BLAS)
+        shell: bash
+        run: |
+          # Robust discovery: find libopenblas*.a under /usr/lib regardless of
+          # arch suffix or sub-directory (works on x86_64 and aarch64 Debian/Ubuntu).
+          # SC2155: declare and assign separately to avoid masking return values.
+          OPENBLAS_A=$(find /usr/lib -name 'libopenblas*.a' 2>/dev/null | head -1)
+          test -n "$OPENBLAS_A" || { echo "::error::libopenblas.a not found"; exit 1; }
+          OPENBLAS_LIB_DIR=$(dirname "$OPENBLAS_A")
+          export OPENBLAS_LIB_DIR
+          echo "OPENBLAS_LIB_DIR=$OPENBLAS_LIB_DIR" >> "$GITHUB_ENV"
+          echo "OPENBLAS_LIB_DIR=$OPENBLAS_LIB_DIR"
+          export TURBOVEC_STATIC_BLAS=1
+          npx napi build --platform --release
+
+      - name: Smoke test (require)
+        shell: bash
+        run: |
+          node -e "
+            const fs = require('fs');
+            const nodeFile = fs.readdirSync('.').find(f => f.endsWith('.node'));
+            console.log('Loading:', nodeFile);
+            const t = require('./' + nodeFile);
+            const i = new t.TurboQuantIndex(8, 4);
+            i.add(new Float32Array(16).fill(0.1), 8);
+            const r = i.search(new Float32Array(8).fill(0.1), 2);
+            console.log('search ok nq=', r.nq, 'k=', r.k);
+            console.log('SMOKE OK');
+          "
+
+      - name: Assert no dynamic math libs (Linux)
+        shell: bash
+        run: |
+          # SC2012/SC2035: use find + ./ prefix to handle dashes in filenames.
+          NODE_FILE=$(find . -maxdepth 1 -name "*.node" | head -1)
+          ldd "$NODE_FILE"
+          ldd "$NODE_FILE" | grep -iE 'openblas|gfortran|gomp|quadmath' && { echo "::error::dynamic math dependency"; exit 1; } || echo "ok: self-contained"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: node-linux-x64
+          path: turbovec-node/*.node
+
+  build-linux-arm64:
+    name: Build linux-arm64
+    runs-on: ubuntu-24.04-arm
+    defaults:
+      run:
+        working-directory: turbovec-node
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install OpenBLAS + gfortran
+        run: sudo apt-get update && sudo apt-get install -y libopenblas-dev libopenblas-pthread-dev gfortran
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build .node (static BLAS)
+        shell: bash
+        run: |
+          # Robust discovery: find libopenblas*.a under /usr/lib regardless of
+          # arch suffix or sub-directory (works on x86_64 and aarch64 Debian/Ubuntu).
+          # SC2155: declare and assign separately to avoid masking return values.
+          OPENBLAS_A=$(find /usr/lib -name 'libopenblas*.a' 2>/dev/null | head -1)
+          test -n "$OPENBLAS_A" || { echo "::error::libopenblas.a not found"; exit 1; }
+          OPENBLAS_LIB_DIR=$(dirname "$OPENBLAS_A")
+          export OPENBLAS_LIB_DIR
+          echo "OPENBLAS_LIB_DIR=$OPENBLAS_LIB_DIR" >> "$GITHUB_ENV"
+          echo "OPENBLAS_LIB_DIR=$OPENBLAS_LIB_DIR"
+          export TURBOVEC_STATIC_BLAS=1
+          npx napi build --platform --release
+
+      - name: Smoke test (require)
+        shell: bash
+        run: |
+          node -e "
+            const fs = require('fs');
+            const nodeFile = fs.readdirSync('.').find(f => f.endsWith('.node'));
+            console.log('Loading:', nodeFile);
+            const t = require('./' + nodeFile);
+            const i = new t.TurboQuantIndex(8, 4);
+            i.add(new Float32Array(16).fill(0.1), 8);
+            const r = i.search(new Float32Array(8).fill(0.1), 2);
+            console.log('search ok nq=', r.nq, 'k=', r.k);
+            console.log('SMOKE OK');
+          "
+
+      - name: Assert no dynamic math libs (Linux)
+        shell: bash
+        run: |
+          # SC2012/SC2035: use find + ./ prefix to handle dashes in filenames.
+          NODE_FILE=$(find . -maxdepth 1 -name "*.node" | head -1)
+          ldd "$NODE_FILE"
+          ldd "$NODE_FILE" | grep -iE 'openblas|gfortran|gomp|quadmath' && { echo "::error::dynamic math dependency"; exit 1; } || echo "ok: self-contained"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: node-linux-arm64
+          path: turbovec-node/*.node
+
+  build-macos-arm64:
+    name: Build darwin-arm64
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: turbovec-node
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      # macOS: build.rs emits -framework Accelerate automatically; no BLAS env needed.
+      - name: Build .node
+        run: npx napi build --platform --release
+
+      - name: Smoke test (require)
+        run: |
+          node -e "
+            const fs = require('fs');
+            const nodeFile = fs.readdirSync('.').find(f => f.endsWith('.node'));
+            console.log('Loading:', nodeFile);
+            const t = require('./' + nodeFile);
+            const i = new t.TurboQuantIndex(8, 4);
+            i.add(new Float32Array(16).fill(0.1), 8);
+            const r = i.search(new Float32Array(8).fill(0.1), 2);
+            console.log('search ok nq=', r.nq, 'k=', r.k);
+            console.log('SMOKE OK');
+          "
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: node-darwin-arm64
+          path: turbovec-node/*.node
+
+  build-windows-x64:
+    name: Build win32-x64
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: turbovec-node
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Windows: falls through to ndarray's pure-Rust matrixmultiply fallback;
+      # no OpenBLAS env needed.
+      - name: Build .node
+        run: npx napi build --platform --release
+
+      - name: Smoke test (require)
+        shell: bash
+        run: |
+          node -e "
+            const fs = require('fs');
+            const nodeFile = fs.readdirSync('.').find(f => f.endsWith('.node'));
+            console.log('Loading:', nodeFile);
+            const t = require('./' + nodeFile);
+            const i = new t.TurboQuantIndex(8, 4);
+            i.add(new Float32Array(16).fill(0.1), 8);
+            const r = i.search(new Float32Array(8).fill(0.1), 2);
+            console.log('search ok nq=', r.nq, 'k=', r.k);
+            console.log('SMOKE OK');
+          "
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: node-win32-x64
+          path: turbovec-node/*.node
+
+  # ── Publish ─────────────────────────────────────────────────────────────────
+
+  release:
+    name: GitHub Release + npm publish
+    runs-on: ubuntu-latest
+    needs: [build-linux-x64, build-linux-arm64, build-macos-arm64, build-windows-x64]
+    # Gate on main ref only — workflow_dispatch from a non-main branch runs
+    # the build jobs above (for manual testing) but must NOT publish.
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        working-directory: turbovec-node
+        run: npm ci
+
+      - name: Determine whether to publish
+        id: check
+        working-directory: turbovec-node
+        run: |
+          NAME=$(node -p "require('./package.json').name")
+          VER=$(node -p "require('./package.json').version")
+          echo "Package: $NAME@$VER"
+          if [ "$VER" = "0.0.0" ]; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping: version is placeholder 0.0.0"
+          elif npm view "$NAME@$VER" version >/dev/null 2>&1; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping: $NAME@$VER already exists on npm"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "version=$VER" >> "$GITHUB_OUTPUT"
+            echo "Will publish: $NAME@$VER"
+          fi
+
+      # Download all per-platform .node artifacts into the turbovec-node directory.
+      # napi prepublish (run via the prepublishOnly hook) expects them alongside
+      # the root package.
+      - name: Download all .node artifacts
+        if: steps.check.outputs.publish == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          path: turbovec-node
+          merge-multiple: true
+
+      # Fail fast if any platform artifact is missing before we attempt publish.
+      - name: Assert all 4 platform artifacts present
+        if: steps.check.outputs.publish == 'true'
+        working-directory: turbovec-node
+        shell: bash
+        run: |
+          COUNT=$(find . -maxdepth 1 -name '*.node' | wc -l)
+          test "$COUNT" -eq 4 || { echo "::error::expected 4 .node artifacts, found $COUNT"; exit 1; }
+          echo "Found $COUNT .node artifacts — proceeding"
+
+      - name: GitHub Release
+        if: steps.check.outputs.publish == 'true'
+        uses: ncipollo/release-action@v1
+        with:
+          tag: v${{ steps.check.outputs.version }}
+          name: v${{ steps.check.outputs.version }}
+          generateReleaseNotes: true
+
+      - name: npm publish platform packages
+        # prepublishOnly hook (napi prepublish -t npm) runs automatically here
+        # via npm publish — do NOT run napi prepublish as a separate step to
+        # avoid double-invocation.
+        if: steps.check.outputs.publish == 'true'
+        working-directory: turbovec-node
+        shell: bash
+        run: |
+          for pkg_dir in npm/*/; do
+            echo "Publishing $pkg_dir"
+            npm publish "$pkg_dir" --access public
+          done
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: npm publish root package
+        if: steps.check.outputs.publish == 'true'
+        working-directory: turbovec-node
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

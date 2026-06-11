@@ -84,3 +84,76 @@ jobs:
       - name: Run pytest
         shell: bash
         run: pytest turbovec-python/tests/ -v
+
+  node:
+    name: Node (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-14, windows-latest]
+    defaults:
+      run:
+        working-directory: turbovec-node
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Linux: install static OpenBLAS + Fortran runtime so the .node is
+      # self-contained (no system libopenblas dependency on end-user machines).
+      - name: Install OpenBLAS + gfortran (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libopenblas-dev libopenblas-pthread-dev gfortran
+
+      - name: Install dependencies
+        run: npm ci
+
+      # On Linux: static BLAS via env vars discovered in Docker verification.
+      # On macOS: Accelerate framework (no extra env needed — build.rs handles it).
+      # On Windows: pure-Rust matrixmultiply fallback (no BLAS env needed).
+      - name: Build native addon (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          # Robust discovery: find libopenblas*.a under /usr/lib regardless of
+          # arch suffix or sub-directory (works on x86_64 and aarch64 Debian/Ubuntu).
+          # SC2155: declare and assign separately to avoid masking return values.
+          OPENBLAS_A=$(find /usr/lib -name 'libopenblas*.a' 2>/dev/null | head -1)
+          test -n "$OPENBLAS_A" || { echo "::error::libopenblas.a not found"; exit 1; }
+          OPENBLAS_LIB_DIR=$(dirname "$OPENBLAS_A")
+          export OPENBLAS_LIB_DIR
+          echo "OPENBLAS_LIB_DIR=$OPENBLAS_LIB_DIR" >> "$GITHUB_ENV"
+          echo "OPENBLAS_LIB_DIR=$OPENBLAS_LIB_DIR"
+          export TURBOVEC_STATIC_BLAS=1
+          npx napi build --platform --release
+
+      - name: Build native addon (macOS / Windows)
+        if: runner.os != 'Linux'
+        run: npx napi build --platform --release
+
+      # Lint/format steps will be added in the integration slice (slice 4)
+      # once eslint/prettier configs land in turbovec-node/.
+
+      - name: TypeScript type-check
+        run: npx tsc --noEmit
+
+      # On Linux: assert the .node has NO dynamic math library dependencies.
+      # A dynamic dep means static linking silently fell back, which would
+      # cause load failures on stock end-user Linux boxes.
+      - name: Assert no dynamic math libs (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          # SC2012/SC2035: use find + ./ prefix to handle dashes in filenames.
+          NODE_FILE=$(find . -maxdepth 1 -name "*.node" | head -1)
+          echo "Checking: $NODE_FILE"
+          ldd "$NODE_FILE"
+          ldd "$NODE_FILE" | grep -iE 'openblas|gfortran|gomp|quadmath' && { echo "::error::dynamic math dependency"; exit 1; } || echo "ok: self-contained"
+
+      - name: Run vitest
+        run: npx vitest run

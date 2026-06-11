@@ -1,6 +1,6 @@
 {
   "name": "turbovec",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "description": "Fast vector quantization with 2-4 bit compression and SIMD search — Node.js native addon",
   "license": "MIT",
   "repository": {
@@ -39,9 +39,9 @@
     "vitest": "^2"
   },
   "optionalDependencies": {
-    "turbovec-linux-x64-gnu": "0.1.0",
-    "turbovec-linux-arm64-gnu": "0.1.0",
-    "turbovec-darwin-arm64": "0.1.0",
-    "turbovec-win32-x64-msvc": "0.1.0"
+    "turbovec-linux-x64-gnu": "0.0.0",
+    "turbovec-linux-arm64-gnu": "0.0.0",
+    "turbovec-darwin-arm64": "0.0.0",
+    "turbovec-win32-x64-msvc": "0.0.0"
   }
 }

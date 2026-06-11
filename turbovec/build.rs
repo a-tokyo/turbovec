@@ -42,7 +42,55 @@ fn main() {
                 if let Ok(lib_dir) = std::env::var("OPENBLAS_LIB_DIR") {
                     println!("cargo:rustc-link-search=native={lib_dir}");
                 }
+                // Also add the GCC runtime library search paths so the linker
+                // can find libgfortran.a and libgomp.a.  We ask GCC to print
+                // its own library directories and add each one that exists.
+                // If the helper isn't available we silently skip (non-Linux
+                // cross-compile environments where TURBOVEC_STATIC_BLAS is
+                // never set anyway).
+                if let Ok(output) = std::process::Command::new("gcc")
+                    .args(["-print-search-dirs"])
+                    .output()
+                {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    for line in stdout.lines() {
+                        if let Some(rest) = line.strip_prefix("libraries: =") {
+                            for dir in rest.split(':') {
+                                let trimmed = dir.trim();
+                                if !trimmed.is_empty()
+                                    && std::path::Path::new(trimmed).exists()
+                                {
+                                    println!("cargo:rustc-link-search=native={trimmed}");
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Static OpenBLAS — must come FIRST so it can pull in symbols
+                // from the Fortran/OpenMP runtimes listed after it.
                 println!("cargo:rustc-link-lib=static=openblas");
+
+                // Fortran runtime: ship libgfortran statically so the .node
+                // doesn't require a system gfortran install on end-user boxes.
+                // (libgfortran.a is present in the Debian/Ubuntu gfortran package.)
+                println!("cargo:rustc-link-lib=static=gfortran");
+
+                // OpenMP runtime used by OpenBLAS's threaded kernels: link
+                // statically for the same self-contained-binary reason.
+                println!("cargo:rustc-link-lib=static=gomp");
+
+                // quadmath (128-bit float support) is x86_64-only; on aarch64
+                // it doesn't exist.  Attempt static link; if the .a isn't
+                // present the linker simply won't need it (OpenBLAS aarch64
+                // doesn't reference __float128 symbols).
+                // NOTE: on x86_64 hosts add `cargo:rustc-link-lib=static=quadmath`
+                // if the link step fails with undefined `__quadmath_*` symbols.
+
+                // pthreads and libm are present on every Linux box — keep them
+                // dynamic so we don't pull in a second copy from musl/glibc.
+                println!("cargo:rustc-link-lib=pthread");
+                println!("cargo:rustc-link-lib=m");
             } else {
                 println!("cargo:rustc-link-lib=openblas");
             }
