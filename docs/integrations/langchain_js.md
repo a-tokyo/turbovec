@@ -1,6 +1,6 @@
 # LangChain.js integration
 
-`turbovec/langchain`'s `TurbovecVectorStore` is a [LangChain.js `VectorStore`](https://js.langchain.com/docs/integrations/vectorstores/) backed by a native `IdMapIndex`. It implements the same public surface as `@langchain/core`'s in-memory store and can be used as a drop-in replacement wherever an in-memory store is used. It is the JS twin of the Python `turbovec.langchain.TurboQuantVectorStore`, and the two share a byte-compatible on-disk format.
+`turbovec/langchain`'s `TurbovecVectorStore` is a [LangChain.js `VectorStore`](https://js.langchain.com/docs/integrations/vectorstores/) backed by a native `IdMapIndex`. It implements the same public surface as `@langchain/core`'s in-memory store and can be used as a drop-in replacement wherever an in-memory store is used. It is the JS twin of the Python `turbovec.langchain.TurboQuantVectorStore`, and the two share a schema-compatible on-disk format (the `docstore.json` has the same `schema_version` and field names; raw bytes differ because Python's `json.dump` and JS's `JSON.stringify` use different separator conventions).
 
 ## Install
 
@@ -95,7 +95,7 @@ const qvec = await embeddings.embedQuery("...");
 const byVec = await store.similaritySearchVectorWithScore(qvec, 5);
 ```
 
-Scores are returned on the LangChain **relevance** scale `[0, 1]`: the raw cosine similarity in `[-1, 1]` is mapped via `(sim + 1) / 2` and clamped (to absorb the tiny overshoot caused by quantization noise). Higher is better. This mirrors the Python store's `_select_relevance_score_fn`.
+`similaritySearchWithScore` returns **raw cosine scores** in `[-1, 1]` (possibly slightly outside that range due to quantization noise) — the LangChain.js convention for `similaritySearchVectorWithScore` is to return raw scores, matching the Python store's `_search_vector`. To get remapped relevance scores in `[0, 1]`, use `similaritySearchWithRelevanceScores`; the base class calls `_selectRelevanceScoreFn()` (which maps `(sim+1)/2` and clamps to `[0, 1]`) on that path automatically.
 
 ## Document retrieval by id
 

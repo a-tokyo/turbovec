@@ -289,6 +289,15 @@ jobs:
       - name: Determine whether to publish
         id: check
         working-directory: turbovec-node
+        # Guard semantics:
+        #   1. 0.0.0 placeholder → skip publish (unconditional short-circuit,
+        #      no network call).
+        #   2. `npm view` exits 0 → version already on npm → skip (idempotent).
+        #   3. `npm view` exits non-zero with E404 or "not found" in its output
+        #      → version is new → set publish=true.
+        #   4. `npm view` exits non-zero for ANY OTHER reason (network 5xx,
+        #      ENOTFOUND, timeout, registry outage) → FAIL loudly rather than
+        #      proceeding to publish on a bad-connectivity false-negative.
         run: |
           NAME=$(node -p "require('./package.json').name")
           VER=$(node -p "require('./package.json').version")
@@ -296,13 +305,24 @@ jobs:
           if [ "$VER" = "0.0.0" ]; then
             echo "publish=false" >> "$GITHUB_OUTPUT"
             echo "Skipping: version is placeholder 0.0.0"
-          elif npm view "$NAME@$VER" version >/dev/null 2>&1; then
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-            echo "Skipping: $NAME@$VER already exists on npm"
           else
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-            echo "version=$VER" >> "$GITHUB_OUTPUT"
-            echo "Will publish: $NAME@$VER"
+            NPM_OUT=$(npm view "$NAME@$VER" version 2>&1) || NPM_EXIT=$?
+            NPM_EXIT=${NPM_EXIT:-0}
+            if [ "$NPM_EXIT" -eq 0 ]; then
+              echo "publish=false" >> "$GITHUB_OUTPUT"
+              echo "Skipping: $NAME@$VER already exists on npm"
+            elif echo "$NPM_OUT" | grep -qiE 'E404|not found|code E404'; then
+              # Definitive 404 → version not yet published.
+              echo "publish=true" >> "$GITHUB_OUTPUT"
+              echo "version=$VER" >> "$GITHUB_OUTPUT"
+              echo "Will publish: $NAME@$VER"
+            else
+              # Ambiguous failure (network error, registry outage, …) → abort
+              # rather than risk a spurious publish.
+              echo "::error::npm view $NAME@$VER failed with a non-404 error (exit $NPM_EXIT). Output:"
+              echo "$NPM_OUT"
+              exit 1
+            fi
           fi
 
       # Download all per-platform .node artifacts into turbovec-node/artifacts/.

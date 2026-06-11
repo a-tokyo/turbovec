@@ -6,7 +6,8 @@
   ],
   "main": "turbovec.darwin-arm64.node",
   "files": [
-    "turbovec.darwin-arm64.node"
+    "turbovec.darwin-arm64.node",
+    "LICENSE"
   ],
   "description": "Fast vector quantization with 2-4 bit compression and SIMD search — Node.js native addon",
   "license": "MIT",

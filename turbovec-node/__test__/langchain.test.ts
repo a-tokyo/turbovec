@@ -177,14 +177,44 @@ describe('similarity search', () => {
 // ── Relevance score normalization ─────────────────────────────────────────
 
 describe('relevance scores', () => {
-  it('scores fall within [0, 1]', async () => {
+  // similaritySearchWithScore returns raw cosine scores (the base class passes
+  // similaritySearchVectorWithScore output through verbatim). Raw cosines can
+  // be in [-1, 1] — we assert they are numbers, not that they are in [0, 1].
+  it('similaritySearchWithScore returns raw cosine scores (numbers, not remapped)', async () => {
     const emb = newEmb();
     const store = await TurbovecVectorStore.fromTexts(['one', 'two', 'three'], {}, emb);
     const results = await store.similaritySearchWithScore('one', 3);
     expect(results.length).toBe(3);
     for (const [, score] of results) {
-      expect(score).toBeGreaterThanOrEqual(0);
-      expect(score).toBeLessThanOrEqual(1);
+      expect(typeof score).toBe('number');
+      // Raw cosine: [-1, 1] plus tiny quantization noise — not remapped to [0, 1].
+      expect(score).toBeGreaterThanOrEqual(-1.1);
+      expect(score).toBeLessThanOrEqual(1.1);
+    }
+  });
+
+  // _selectRelevanceScoreFn must remap cosine → [0, 1] for the relevance-score
+  // path. The installed @langchain/core version does not expose
+  // similaritySearchWithRelevanceScores as a public method, so we verify the
+  // overridden fn directly.
+  it('_selectRelevanceScoreFn maps cosine scores to [0, 1]', () => {
+    const emb = newEmb();
+    const store = new TurbovecVectorStore(emb);
+    const relevanceFn = (
+      store as unknown as { _selectRelevanceScoreFn(): (s: number) => number }
+    )._selectRelevanceScoreFn();
+    // Boundary values
+    expect(relevanceFn(1)).toBe(1); // cos=1 → (1+1)/2 = 1
+    expect(relevanceFn(-1)).toBe(0); // cos=-1 → (-1+1)/2 = 0
+    expect(relevanceFn(0)).toBe(0.5); // cos=0 → (0+1)/2 = 0.5
+    // Quantization overshoot is clamped
+    expect(relevanceFn(1.05)).toBe(1);
+    expect(relevanceFn(-1.05)).toBe(0);
+    // All outputs must be in [0, 1]
+    for (const cos of [-1, -0.5, 0, 0.5, 1]) {
+      const r = relevanceFn(cos);
+      expect(r).toBeGreaterThanOrEqual(0);
+      expect(r).toBeLessThanOrEqual(1);
     }
   });
 });
@@ -362,6 +392,31 @@ describe('upsert and dedup', () => {
     const results = await store.similaritySearch('hello', 5);
     expect(results.length).toBe(1);
     expect(results[0]!.id).toBe('my-id');
+  });
+
+  // FIX 5 twin of Python's ValueError on ids-length mismatch: providing an ids
+  // array whose length differs from the documents array must throw immediately
+  // (not silently UUID-fill the tail). Tests both under- and over-specification.
+  it('options.ids shorter than documents throws (off-by-one)', async () => {
+    const emb = newEmb();
+    const store = new TurbovecVectorStore(emb);
+    const docs = [
+      new Document({ pageContent: 'a' }),
+      new Document({ pageContent: 'b' }),
+      new Document({ pageContent: 'c' }),
+    ];
+    await expect(store.addDocuments(docs, { ids: ['only-one', 'only-two'] })).rejects.toThrow(
+      /options\.ids length/,
+    );
+  });
+
+  it('options.ids longer than documents throws', async () => {
+    const emb = newEmb();
+    const store = new TurbovecVectorStore(emb);
+    const docs = [new Document({ pageContent: 'a' })];
+    await expect(store.addDocuments(docs, { ids: ['id-a', 'extra-id'] })).rejects.toThrow(
+      /options\.ids length/,
+    );
   });
 
   it('mismatched dim against an eager index raises', async () => {

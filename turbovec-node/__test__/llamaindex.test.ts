@@ -46,8 +46,9 @@ function makeNode(
   return node;
 }
 
-// Deterministic embedder (FNV-1a + mulberry32 + Box-Muller + L2-normalise),
+// Deterministic embedder (FNV-1a + xorshiftHash32 + Box-Muller + L2-normalise),
 // matching the shared `HashEmbeddings` helper but synchronous.
+// NOTE: must stay byte-stable: changing this function invalidates all seeded test vectors.
 function hashEmbed(text: string, dim: number): number[] {
   let h = 0x811c9dc5;
   for (let i = 0; i < text.length; i++) {
@@ -55,6 +56,7 @@ function hashEmbed(text: string, dim: number): number[] {
     h = Math.imul(h, 0x01000193);
   }
   let s = h >>> 0;
+  // xorshiftHash32 inline: must stay byte-stable
   const rng = () => {
     s = (Math.imul(s ^ (s >>> 15), s | 1) ^ 1) >>> 0;
     s ^= s << 3;
@@ -561,6 +563,83 @@ describe('missing-handle guard', () => {
     internals.u64ToNodeId.delete(handleB);
     const res = await store.query(defaultQuery('alpha', 3));
     expect(res.ids.sort()).toEqual(['alpha', 'gamma']);
+  });
+});
+
+// ── End-to-end retrieval round-trip ─────────────────────────────────────────
+//
+// Exercises the `add → query` path that `VectorStoreIndex.fromVectorStore`
+// (umbrella `llamaindex` package) would drive through the `BaseVectorStore`
+// interface. We use only `@llamaindex/core` primitives here to avoid pulling
+// the heavy umbrella. The assertions cover exactly what fromVectorStore
+// verifies at the store boundary: that added nodes are returned in the correct
+// order on a semantic query and that the reconstructed node carries its
+// original text and metadata.
+
+describe('end-to-end retrieval round-trip', () => {
+  it('add then query returns the expected node via the BaseVectorStore interface', async () => {
+    const store = new TurbovecVectorStore();
+    const nodes = [
+      makeNode('quantum computing explained', {
+        id: 'qc',
+        metadata: { topic: 'quantum' },
+        refDocId: 'doc-quantum',
+      }),
+      makeNode('classical machine learning basics', {
+        id: 'ml',
+        metadata: { topic: 'ml' },
+        refDocId: 'doc-ml',
+      }),
+      makeNode('neural network architectures', {
+        id: 'nn',
+        metadata: { topic: 'ml' },
+        refDocId: 'doc-ml',
+      }),
+    ];
+
+    const returnedIds = await store.add(nodes);
+    expect(returnedIds).toEqual(['qc', 'ml', 'nn']);
+
+    // Query for the quantum node — its deterministic hash embedding is
+    // sufficiently distant from the ML/NN nodes that it should rank first.
+    const result = await store.query(defaultQuery('quantum computing explained', 3));
+
+    expect(result.ids.length).toBe(3);
+    expect(result.nodes!.length).toBe(3);
+    expect(result.similarities.length).toBe(3);
+
+    // Self-match must rank first (same text → same embedding).
+    const top = result.nodes![0] as TextNode;
+    expect(top.id_).toBe('qc');
+    expect(top.text).toBe('quantum computing explained');
+    expect(top.metadata.topic).toBe('quantum');
+    expect(top.sourceNode?.nodeId).toBe('doc-quantum');
+
+    // Similarities are non-increasing.
+    for (let i = 1; i < result.similarities.length; i++) {
+      expect(result.similarities[i - 1]!).toBeGreaterThanOrEqual(result.similarities[i]!);
+    }
+  });
+
+  it('round-trip after persist preserves node text, metadata, and refDocId', async () => {
+    const dir = tmpDir();
+    const store = new TurbovecVectorStore();
+    await store.add([
+      makeNode('the quick brown fox', {
+        id: 'fox',
+        metadata: { animal: true },
+        refDocId: 'doc-1',
+      }),
+    ]);
+    await store.persist(dir);
+
+    const loaded = TurbovecVectorStore.fromPersistDir(dir);
+    const result = await loaded.query(defaultQuery('the quick brown fox', 1));
+    expect(result.ids).toEqual(['fox']);
+    const node = result.nodes![0] as TextNode;
+    expect(node.text).toBe('the quick brown fox');
+    expect(node.metadata.animal).toBe(true);
+    expect(node.sourceNode?.nodeId).toBe('doc-1');
   });
 });
 

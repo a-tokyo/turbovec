@@ -6,7 +6,8 @@
   ],
   "main": "turbovec.linux-x64-gnu.node",
   "files": [
-    "turbovec.linux-x64-gnu.node"
+    "turbovec.linux-x64-gnu.node",
+    "LICENSE"
   ],
   "description": "Fast vector quantization with 2-4 bit compression and SIMD search — Node.js native addon",
   "license": "MIT",

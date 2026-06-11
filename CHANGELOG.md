@@ -41,9 +41,11 @@ it touches.
 - **LangChain.js integration** (`turbovec/langchain`). `TurbovecVectorStore`
   implements `@langchain/core`'s `VectorStore` surface as a drop-in for the
   in-memory store, and is the JS twin of the Python
-  `turbovec.langchain.TurboQuantVectorStore` — sharing a byte-compatible
-  `docstore.json` side-car format. `@langchain/core` is an optional peer
-  dependency.
+  `turbovec.langchain.TurboQuantVectorStore` — sharing a schema-compatible
+  `docstore.json` side-car format (same `schema_version` and field names; the
+  raw bytes differ because Python's `json.dump` and JS's `JSON.stringify` use
+  different whitespace/separator conventions). `@langchain/core` is an optional
+  peer dependency.
 
 - **LlamaIndex.TS integration** (`turbovec/llamaindex`). `TurbovecVectorStore`
   implements `@llamaindex/core`'s `BaseVectorStore` surface as a drop-in for

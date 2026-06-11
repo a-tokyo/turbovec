@@ -7,8 +7,11 @@
  * A minimal seeded PRNG so tests are deterministic without external deps.
  * Algorithm: xorshift on (s ^ (s >>> 15)) then multiply-xorshift with
  * constant 0x45d9f3b, producing a uniform float in [0, 1).
+ *
+ * NOTE: must stay byte-stable: changing this function invalidates all seeded
+ * test vectors. The name "xorshiftHash32" reflects the actual algorithm.
  */
-export function mulberry32(seed: number): () => number {
+export function xorshiftHash32(seed: number): () => number {
   let s = seed >>> 0;
   return () => {
     s = (Math.imul(s ^ (s >>> 15), s | 1) ^ 1) >>> 0;
@@ -23,7 +26,7 @@ export function mulberry32(seed: number): () => number {
  * Returns a flat row-major Float32Array of length n * dim.
  */
 export function unitVectors(n: number, dim: number, seed = 0): Float32Array {
-  const rng = mulberry32(seed);
+  const rng = xorshiftHash32(seed);
   const out = new Float32Array(n * dim);
 
   for (let i = 0; i < n; i++) {
@@ -67,7 +70,7 @@ export function rowNumbers(buf: Float32Array, i: number, k: number): number[] {
 
 /**
  * Deterministic text -> unit-vector embedder for the LangChain tests. JS twin
- * of the Python `StubEmbeddings`: hashes the input string to seed `mulberry32`,
+ * of the Python `StubEmbeddings`: hashes the input string to seed `xorshiftHash32`,
  * then draws a Normal(0,1) vector via Box-Muller and L2-normalises it. The same
  * text always maps to the same vector (so a self-query self-matches even after
  * quantization), while distinct texts map to near-orthogonal vectors (so
@@ -84,7 +87,7 @@ export class HashEmbeddings {
       h ^= text.charCodeAt(i);
       h = Math.imul(h, 0x01000193);
     }
-    const rng = mulberry32(h >>> 0);
+    const rng = xorshiftHash32(h >>> 0);
     const v = new Array<number>(this.dim);
     for (let j = 0; j < this.dim; j++) {
       const u1 = Math.max(rng(), 1e-10);

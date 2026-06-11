@@ -185,11 +185,11 @@ jobs:
           ")
           echo "$FILES"
           for f in \
-            dist/langchain.mjs dist/langchain.cjs dist/langchain.d.ts \
-            dist/llamaindex.mjs dist/llamaindex.cjs dist/llamaindex.d.ts; do
+            dist/langchain.mjs dist/langchain.cjs dist/langchain.d.ts dist/langchain.d.mts \
+            dist/llamaindex.mjs dist/llamaindex.cjs dist/llamaindex.d.ts dist/llamaindex.d.mts; do
             echo "$FILES" | grep -qx "$f" || { echo "::error::missing $f in npm pack tarball"; exit 1; }
           done
-          echo "ok: dist/{langchain,llamaindex}.{mjs,cjs,d.ts} present in tarball"
+          echo "ok: dist/{langchain,llamaindex}.{mjs,cjs,d.ts,d.mts} present in tarball"
 
       # Exercise the PUBLISHED package shape end-to-end — the blind spot that let
       # the binary-less platform-package bug ship. pack the root, install the

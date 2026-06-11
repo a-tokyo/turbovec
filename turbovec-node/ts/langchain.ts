@@ -190,6 +190,16 @@ export class TurbovecVectorStore extends VectorStore {
     // Resolve ids: explicit option > Document.id > generated UUID. Per-document
     // fallback so partial ids are honoured (does not mutate caller Documents).
     const optionIds = options?.ids;
+    // Mirrors Python's ValueError: ids must cover every document or be omitted
+    // entirely. A shorter ids array would silently UUID-fill the tail, masking
+    // caller bugs. An exact length check (not just "shorter") catches both
+    // under- and over-specification.
+    if (optionIds !== undefined && optionIds.length !== documents.length) {
+      throw new Error(
+        `options.ids length (${optionIds.length}) does not match documents length (${documents.length}); ` +
+          `provide exactly one id per document or omit ids entirely`,
+      );
+    }
     let ids = documents.map((doc, i) => optionIds?.[i] ?? doc.id ?? randomUUID());
 
     let texts = documents.map((doc) => doc.pageContent);
@@ -271,8 +281,17 @@ export class TurbovecVectorStore extends VectorStore {
   // ---- Read path (similarity search) --------------------------------
 
   /**
-   * Search by a pre-computed query vector. Returns `[Document, relevance]`
-   * tuples where relevance ∈ [0, 1] (`(cosine + 1) / 2`, clamped).
+   * Search by a pre-computed query vector. Returns `[Document, rawScore]`
+   * tuples where `rawScore` is the native cosine similarity in `[-1, 1]`
+   * (possibly slightly outside due to quantization noise). LangChain's base
+   * class calls this method verbatim from `similaritySearchWithScore`, so
+   * returning raw scores here is the convention. Relevance remapping
+   * (`(sim+1)/2` → `[0,1]`) is applied only on the separate
+   * `similaritySearchWithRelevanceScores` path, which the base class handles
+   * by calling `_selectRelevanceScoreFn()` itself.
+   *
+   * Mirrors the Python store's `_search_vector` which returns `float(score)`
+   * (raw cosine, no remapping).
    */
   async similaritySearchVectorWithScore(
     query: number[],
@@ -280,7 +299,6 @@ export class TurbovecVectorStore extends VectorStore {
     filter?: FilterType,
   ): Promise<[DocumentInterface, number][]> {
     if (this.index.length === 0) return [];
-    const relevance = this._selectRelevanceScoreFn();
     const qvec = Float32Array.from(query);
 
     let result;
@@ -320,7 +338,9 @@ export class TurbovecVectorStore extends VectorStore {
         pageContent: entry.text,
         metadata: { ...entry.metadata },
       });
-      out.push([doc, relevance(result.scores[i]!)]);
+      // Return the raw native score; relevance remapping is the base class's
+      // concern on the `similaritySearchWithRelevanceScores` path.
+      out.push([doc, result.scores[i]!]);
     }
     return out;
   }

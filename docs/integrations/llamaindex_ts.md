@@ -41,26 +41,29 @@ The vector dimensionality is inferred from the first `add()` call.
 
 ```ts
 // No-arg: lazy. dim is inferred from the first add.
-const store = new TurbovecVectorStore();
+const store1 = new TurbovecVectorStore();
 
 // fromParams: same lazy behaviour, plus an explicit bitWidth.
-const store = TurbovecVectorStore.fromParams(undefined, 4);
+const store2 = TurbovecVectorStore.fromParams(undefined, 4);
 
 // Eager: a known dim.
-const store = TurbovecVectorStore.fromParams(1536, 4);
+const store3 = TurbovecVectorStore.fromParams(1536, 4);
 
 // Pre-built index: bring your own IdMapIndex (e.g. one you loaded from disk).
 import { IdMapIndex } from 'turbovec';
-const store = new TurbovecVectorStore({ index: new IdMapIndex(1536, 4) });
+const store4 = new TurbovecVectorStore({ index: new IdMapIndex(1536, 4) });
 ```
 
 `bitWidth` is `2`, `3`, or `4` and is fixed once the index is created.
 
 ## Wiring into an index
 
-`TurbovecVectorStore` is a `BaseVectorStore`, so it plugs into `VectorStoreIndex` / `storageContextFromDefaults` like any other store:
+`TurbovecVectorStore` is a `BaseVectorStore`, so it plugs into `VectorStoreIndex` / `storageContextFromDefaults` like any other store.
+
+> **Note:** The snippet below requires the `llamaindex` umbrella package (`npm install llamaindex`), which is **not** installed in this repository's test suite. `VectorStoreIndex` and `storageContextFromDefaults` live in the umbrella and are not re-exported by `@llamaindex/core`. The snippet is illustrative — the store's `add()` / `query()` interface (exercised in the test suite) is the same interface `VectorStoreIndex` calls under the hood.
 
 ```ts
+// Requires: npm install llamaindex
 import { Settings, VectorStoreIndex, storageContextFromDefaults } from 'llamaindex';
 import { TurbovecVectorStore } from 'turbovec/llamaindex';
 
@@ -172,7 +175,7 @@ const reloaded = TurbovecVectorStore.fromPersistDir('./store');
 - `index.tvim` — the binary `IdMapIndex`.
 - `nodestore.json` — a plain-JSON side-car (never pickle/eval) holding node text, metadata, the node-id↔handle map, and a `schema_version`.
 
-The side-car schema is `{ schema_version, nodes, node_id_to_u64, next_u64, bit_width }` — the same fields and version as the Python writer's `nodes.json`. The per-node payload (`nodeDict`) is produced by LlamaIndex.TS's own `nodeToMetadata` and round-trips via `metadataDictToNode`, preserving the full `BaseNode` subtype, relationships, and excluded-metadata keys. Note that the per-node serialization is **runtime-specific** (LlamaIndex.TS and Python serialize nodes differently); the schema *fields* and version are shared, not the node bytes. v1 side-cars (narrow `{text, metadata, refDocId}`) still load with minimum-fidelity `TextNode` reconstruction.
+The side-car schema is `{ schema_version, nodes, node_id_to_u64, next_u64, bit_width }` — conceptually aligned schema (shared `schema_version` number); top-level and per-node field names differ between runtimes. The Node file uses camelCase top-level keys and a LlamaIndex.TS-serialized `nodeDict` per node; the Python file uses snake_case keys (`ref_doc_id`, `node_dict`) and Python's own serialization format. The files are **not cross-loadable** between runtimes. The per-node payload (`nodeDict`) is produced by LlamaIndex.TS's own `nodeToMetadata` and round-trips via `metadataDictToNode`, preserving the full `BaseNode` subtype, relationships, and excluded-metadata keys. v1 side-cars (narrow `{text, metadata, refDocId}`) still load with minimum-fidelity `TextNode` reconstruction.
 
 Node metadata must be JSON-serializable. An empty (lazy, never-added) store round-trips correctly: `dim` stays `null` and `bitWidth` is preserved, and the next `add` commits the dim.
 

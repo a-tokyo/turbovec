@@ -39,11 +39,22 @@
   "engines": {
     "node": ">= 20"
   },
+  "typesVersions": {
+    "*": {
+      "langchain": [
+        "./dist/langchain.d.ts"
+      ],
+      "llamaindex": [
+        "./dist/llamaindex.d.ts"
+      ]
+    }
+  },
   "files": [
     "index.js",
     "index.d.ts",
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "napi": {
     "binaryName": "turbovec",
@@ -81,7 +92,7 @@
     "vitest": "^2"
   },
   "peerDependencies": {
-    "@langchain/core": ">=0.3.11 <2",
+    "@langchain/core": ">=1 <2",
     "@llamaindex/core": ">=0.6.23 <1"
   },
   "peerDependenciesMeta": {

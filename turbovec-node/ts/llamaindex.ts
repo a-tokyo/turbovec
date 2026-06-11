@@ -58,8 +58,10 @@ const NODES_SCHEMA_COMPAT: readonly number[] = [1, 2];
  * top level for fast filter / doc-id lookup on every query hit. `nodeDict` is
  * the framework's canonical metadata representation (`nodeToMetadata`), which
  * `metadataDictToNode` reconstructs into a full BaseNode — preserving
- * relationships, excluded-metadata keys and templates. Mirrors the Python
- * writer's per-node `{metadata, ref_doc_id, node_dict}` shape.
+ * relationships, excluded-metadata keys and templates. Field names use
+ * camelCase here (Node.js convention); the Python writer uses snake_case
+ * (`ref_doc_id`, `node_dict`) — the schemas are conceptually aligned but are
+ * not cross-loadable between runtimes.
  */
 interface NodeStoreEntry {
   metadata: Metadata;
