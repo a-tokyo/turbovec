@@ -104,6 +104,8 @@ const byVec = await store.similaritySearchVectorWithScore(qvec, 5);
 
 `similaritySearchWithScore` returns **raw cosine scores** in `[-1, 1]` (possibly slightly outside that range due to quantization noise) — the LangChain.js convention for `similaritySearchVectorWithScore` is to return raw scores, matching the Python store's `_search_vector`. To get normalized relevance scores in `[0, 1]`, call `similaritySearchWithRelevanceScores` — this is a first-class method on `TurbovecVectorStore` (not inherited from the base class, since `@langchain/core` v1 removed it from `VectorStore`). It embeds the query, calls `similaritySearchVectorWithScore`, and maps each raw score through `_selectRelevanceScoreFn()` (`(sim+1)/2`, clamped to `[0, 1]`).
 
+> **Embeddings must be unit-normalized for these score ranges to hold.** turbovec scores the inner product of your vectors; that equals cosine similarity (and stays within `[-1, 1]`) only when the embeddings are unit length. Most embedding models already return normalized vectors — but if yours does not, normalize before indexing, or the raw scores will exceed `[-1, 1]` and the `[0, 1]` relevance mapping will saturate. This matches the Python store's behavior.
+
 ```ts
 const docsWithRelevance = await store.similaritySearchWithRelevanceScores(
   "what is turbovec?",
