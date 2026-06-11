@@ -463,3 +463,58 @@ describe('IdMapIndex numeric argument validation', () => {
     );
   });
 });
+
+// ── SharedArrayBuffer regression (TOCTOU snapshot on addWithIds) ─────────
+//
+// addWithIds snapshots BOTH the Float32Array and the BigUint64Array to
+// owned Vecs before calling into core. Core iterates ids twice (duplicate
+// check, then insert), so a Worker-mutated SAB could bypass the
+// IdAlreadyPresent guard and silently corrupt the id→slot map. A
+// deterministic mid-call-mutation race is not practically testable from JS;
+// this test proves that SAB-backed inputs produce identical index state and
+// search results as normal-ArrayBuffer inputs, confirming the snapshot path
+// is exercised and correct.
+
+describe('IdMapIndex.addWithIds — SharedArrayBuffer input parity', () => {
+  it('SAB-backed vectors and ids yield the same index state and search results as normal typed arrays', () => {
+    const dim = 64;
+    const n = 8;
+    const normalVecs = unitVectors(n, dim, 5);
+    const normalIds = BigUint64Array.from(Array.from({ length: n }, (_, i) => BigInt(100 + i)));
+
+    // Build SAB-backed copies.
+    const vecSab = new SharedArrayBuffer(normalVecs.byteLength);
+    const sabVecs = new Float32Array(vecSab);
+    sabVecs.set(normalVecs);
+
+    const idSab = new SharedArrayBuffer(normalIds.byteLength);
+    const sabIds = new BigUint64Array(idSab);
+    sabIds.set(normalIds);
+
+    // Index built from normal buffers.
+    const idxNormal = new IdMapIndex(dim, 4);
+    idxNormal.addWithIds(normalVecs, normalIds);
+
+    // Index built from SAB-backed buffers.
+    const idxSab = new IdMapIndex(dim, 4);
+    idxSab.addWithIds(sabVecs, sabIds);
+
+    expect(idxSab.length).toBe(idxNormal.length);
+
+    // All inserted ids must be present.
+    for (let i = 0; i < n; i++) {
+      expect(idxSab.contains(BigInt(100 + i))).toBe(true);
+    }
+
+    // Search results must match.
+    const query = unitVectors(3, dim, 77);
+    const resNormal = idxNormal.search(query, 4);
+    const resSab = idxSab.search(query, 4);
+
+    expect(resSab.nq).toBe(resNormal.nq);
+    expect(resSab.k).toBe(resNormal.k);
+    for (let i = 0; i < resNormal.ids.length; i++) {
+      expect(resSab.ids[i]).toBe(resNormal.ids[i]);
+    }
+  });
+});

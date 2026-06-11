@@ -111,11 +111,19 @@ impl IdMapIndex {
             ));
         }
 
-        let v_slice: &[f32] = &vectors;
-        let i_slice: &[u64] = &ids;
+        // Snapshot BOTH typed arrays to owned Vecs BEFORE passing them to
+        // core. A SharedArrayBuffer-backed Float32Array/BigUint64Array can be
+        // mutated by a Worker thread between core's duplicate-id check pass
+        // (id_to_slot lookup over ids) and its insert pass (id_to_slot.insert
+        // + slot_to_id.extend_from_slice). A mutation there bypasses the
+        // IdAlreadyPresent check, silently corrupting the id→slot map with no
+        // error. Copying first gives both passes identical bytes; the copy is
+        // cheap relative to the quantisation work.
+        let v_owned: Vec<f32> = vectors.to_vec();
+        let i_owned: Vec<u64> = ids.to_vec();
 
         self.inner
-            .add_with_ids_2d(v_slice, effective_dim, i_slice)
+            .add_with_ids_2d(&v_owned, effective_dim, &i_owned)
             .map_err(map_add_error)
     }
 

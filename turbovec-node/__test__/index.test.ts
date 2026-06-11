@@ -497,3 +497,47 @@ describe('TurboQuantIndex numeric argument validation', () => {
     expectInvalidArgument(() => idx.swapRemove(-1), 'idx');
   });
 });
+
+// ── SharedArrayBuffer regression (TOCTOU snapshot on add) ────────────────
+//
+// The add path snapshots the Float32Array to an owned Vec<f32> before
+// calling into core. Core reads the input twice (validate-then-quantise),
+// so a Worker-mutated SharedArrayBuffer could inject a NaN between the two
+// reads and abort the process. A deterministic mid-call-mutation race is not
+// practically testable from JS; this test proves instead that SAB-backed
+// inputs produce identical results to normal-ArrayBuffer inputs, confirming
+// the snapshot path is exercised and correct.
+
+describe('TurboQuantIndex.add — SharedArrayBuffer input parity', () => {
+  it('SAB-backed Float32Array yields the same index length and search results as a normal Float32Array', () => {
+    const dim = 64;
+    const n = 10;
+    const normalVecs = unitVectors(n, dim, 3);
+
+    // Build an identical SAB-backed Float32Array.
+    const sab = new SharedArrayBuffer(normalVecs.byteLength);
+    const sabVecs = new Float32Array(sab);
+    sabVecs.set(normalVecs);
+
+    // Index built from normal buffer.
+    const idxNormal = new TurboQuantIndex(dim, 4);
+    idxNormal.add(normalVecs);
+
+    // Index built from SAB-backed buffer.
+    const idxSab = new TurboQuantIndex(dim, 4);
+    idxSab.add(sabVecs);
+
+    expect(idxSab.length).toBe(idxNormal.length);
+
+    // Search results must match for every vector as a query.
+    const query = unitVectors(3, dim, 99);
+    const resNormal = idxNormal.search(query, 5);
+    const resSab = idxSab.search(query, 5);
+
+    expect(resSab.nq).toBe(resNormal.nq);
+    expect(resSab.k).toBe(resNormal.k);
+    for (let i = 0; i < resNormal.indices.length; i++) {
+      expect(resSab.indices[i]).toBe(resNormal.indices[i]);
+    }
+  });
+});

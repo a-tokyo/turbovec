@@ -128,8 +128,15 @@ impl TurboQuantIndex {
             ));
         }
 
-        let slice: &[f32] = &vectors;
-        self.inner.add_2d(slice, effective_dim).map_err(map_add_error)
+        // Snapshot the borrowed vector buffer BEFORE passing it to core.
+        // A SharedArrayBuffer-backed Float32Array can be mutated by a Worker
+        // thread between core's first read (first_invalid_coord validation) and
+        // its second read (the actual insert), turning a valid buffer into one
+        // with a NaN that panics and aborts the Node process across the FFI
+        // boundary. Copying first means both reads see identical bytes; the
+        // copy is cheap relative to the quantisation work.
+        let owned: Vec<f32> = vectors.to_vec();
+        self.inner.add_2d(&owned, effective_dim).map_err(map_add_error)
     }
 
     /// Run a top-`k` search against the index.
