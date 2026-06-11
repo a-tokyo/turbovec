@@ -45,6 +45,7 @@ pub mod search;
 
 pub use error::{AddError, ConstructError};
 pub use id_map::IdMapIndex;
+pub use io::MAX_DIM;
 
 use std::path::Path;
 use std::sync::OnceLock;

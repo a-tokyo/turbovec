@@ -36,7 +36,8 @@ export type TurbovecErrorCode =
   | 'ALLOWLIST_UNKNOWN_ID'
   | 'INDEX_OUT_OF_RANGE'
   | 'DIM_REQUIRED'
-  | 'IO_ERROR';
+  | 'IO_ERROR'
+  | 'INVALID_ARGUMENT';
 
 const TURBOVEC_ERROR_CODES = new Set<string>([
   'DIM_MISMATCH',
@@ -54,6 +55,7 @@ const TURBOVEC_ERROR_CODES = new Set<string>([
   'INDEX_OUT_OF_RANGE',
   'DIM_REQUIRED',
   'IO_ERROR',
+  'INVALID_ARGUMENT',
 ] satisfies TurbovecErrorCode[]);
 
 /**

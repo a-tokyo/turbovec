@@ -4,12 +4,14 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
 use crate::error::{
-    allowlist_empty, allowlist_unknown_ids, dim_required, invalid_query_value, io_error,
-    map_add_error, map_construct_error, query_dim_mismatch, ErrCode,
+    allowlist_empty, allowlist_unknown_ids, checked_uint_arg, dim_required, invalid_query_value,
+    io_error, map_add_error, map_construct_error, query_dim_mismatch, ErrCode,
 };
 
 /// Reused from core to reject invalid input before the FFI crossing.
-use turbovec_core::MAX_INPUT_MAGNITUDE;
+/// `MAX_DIM` bounds `dim` the same way the core read layer bounds it for
+/// serialized headers.
+use turbovec_core::{MAX_DIM, MAX_INPUT_MAGNITUDE};
 
 /// Search result returned by `IdMapIndex.search`.
 #[napi(object)]
@@ -42,11 +44,18 @@ impl IdMapIndex {
     ///
     /// Same `dim`/`bitWidth` semantics as `TurboQuantIndex`.
     #[napi(constructor)]
-    pub fn new(dim: Option<u32>, bit_width: Option<u32>) -> napi::Result<Self, ErrCode> {
-        let bw = bit_width.unwrap_or(4) as usize;
+    pub fn new(dim: Option<f64>, bit_width: Option<f64>) -> napi::Result<Self, ErrCode> {
+        // Validate at the boundary (see `checked_uint_arg`): napi's raw u32
+        // conversion would ToUint32-wrap negative/fractional values. The
+        // core then enforces bitWidth 2..=4 with BIT_WIDTH_OUT_OF_RANGE.
+        let bw = match bit_width {
+            Some(b) => checked_uint_arg("bitWidth", b, u8::MAX as usize)?,
+            None => 4,
+        };
         let inner = match dim {
             Some(d) => {
-                turbovec_core::IdMapIndex::new(d as usize, bw).map_err(map_construct_error)?
+                let d = checked_uint_arg("dim", d, MAX_DIM)?;
+                turbovec_core::IdMapIndex::new(d, bw).map_err(map_construct_error)?
             }
             None => turbovec_core::IdMapIndex::new_lazy(bw).map_err(map_construct_error)?,
         };
@@ -64,12 +73,15 @@ impl IdMapIndex {
         &mut self,
         vectors: Float32Array,
         ids: BigUint64Array,
-        dim: Option<u32>,
+        dim: Option<f64>,
     ) -> napi::Result<(), ErrCode> {
+        let dim = match dim {
+            Some(d) => Some(checked_uint_arg("dim", d, MAX_DIM)?),
+            None => None,
+        };
         let effective_dim: usize = match self.inner.dim_opt() {
             Some(d) => {
                 if let Some(caller_dim) = dim {
-                    let caller_dim = caller_dim as usize;
                     if caller_dim != d {
                         return Err(crate::error::map_add_error(
                             turbovec_core::AddError::DimMismatch {
@@ -82,7 +94,7 @@ impl IdMapIndex {
                 d
             }
             None => match dim {
-                Some(d) => d as usize,
+                Some(d) => d,
                 None => return Err(dim_required()),
             },
         };
@@ -141,11 +153,20 @@ impl IdMapIndex {
     pub fn search(
         &self,
         queries: Float32Array,
-        k: u32,
+        k: f64,
         options: Option<IdSearchOptions>,
     ) -> napi::Result<IdSearchResult, ErrCode> {
-        let k = k as usize;
-        let q_slice: &[f32] = &queries;
+        let k = checked_uint_arg("k", k, u32::MAX as usize)?;
+
+        // Snapshot the borrowed query buffer BEFORE validating it. A
+        // SharedArrayBuffer-backed Float32Array can be mutated by a Worker
+        // thread between our validation and the core scan (TOCTOU), and the
+        // core re-validates and panics on NaN — which aborts the Node
+        // process across the FFI boundary. Copying first means the bytes we
+        // validate are exactly the bytes we search; the copy is cheap
+        // relative to the scan itself.
+        let queries_owned: Vec<f32> = queries.to_vec();
+        let q_slice: &[f32] = &queries_owned;
 
         // Derive nq.
         let nq: usize = if q_slice.is_empty() {
@@ -176,19 +197,21 @@ impl IdMapIndex {
             }
         }
 
-        // Extract and validate allowlist.
-        // `allow_owned` keeps the Vec<u64> alive for the duration of the
-        // `search_with_allowlist` call below.
+        // Extract and validate allowlist. Snapshot the borrowed
+        // BigUint64Array BEFORE validating it (same SAB TOCTOU hazard as the
+        // queries above: the core asserts on unknown ids, so a mutation
+        // between validation and use would abort the process). The owned Vec
+        // also stays alive for the `search_with_allowlist` call below.
         let allow_owned: Option<Vec<u64>> = match options.and_then(|o| o.allowlist) {
             Some(al) => {
-                let slice_ref: &[u64] = &al;
-                if slice_ref.is_empty() {
+                let owned: Vec<u64> = al.to_vec();
+                if owned.is_empty() {
                     return Err(allowlist_empty());
                 }
 
                 // Collect up to 6 unknown ids for the error message.
                 let mut unknown: Vec<u64> = Vec::new();
-                for &id in slice_ref {
+                for &id in &owned {
                     if !self.inner.contains(id) {
                         unknown.push(id);
                         if unknown.len() >= 6 {
@@ -202,7 +225,7 @@ impl IdMapIndex {
                     return Err(allowlist_unknown_ids(&preview, more));
                 }
 
-                Some(slice_ref.to_vec())
+                Some(owned)
             }
             None => None,
         };

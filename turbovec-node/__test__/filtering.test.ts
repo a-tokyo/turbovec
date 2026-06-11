@@ -53,6 +53,12 @@ describe('TurboQuantIndex mask filtering', () => {
         const slot = Number(res.indices[qi * res.k + j]);
         expect(allowed.has(slot)).toBe(true);
       }
+      // Scores are descending per row — mirrors test_filtering.py:62-63.
+      for (let j = 1; j < res.k; j++) {
+        const prev = res.scores[qi * res.k + (j - 1)]!;
+        const curr = res.scores[qi * res.k + j]!;
+        expect(prev - curr).toBeGreaterThanOrEqual(-1e-6);
+      }
     }
   });
 

@@ -6,7 +6,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
 import { TurboQuantIndex } from '../index.js';
-import { unitVectors, row } from './helpers.js';
+import { unitVectors, row, assertClose } from './helpers.js';
 
 // ── Constructor & basic getters ──────────────────────────────────────────
 
@@ -166,7 +166,7 @@ describe('TurboQuantIndex.search', () => {
     expect(res.k).toBe(5);
   });
 
-  it('self-query recall@1 ≥ 95%', () => {
+  it('self-query recall@1 is exact', () => {
     const dim = 256;
     const n = 100;
     const vecs = unitVectors(n, dim, 42);
@@ -179,7 +179,7 @@ describe('TurboQuantIndex.search', () => {
       const res = idx.search(q, 1);
       if (Number(res.indices[0]) === i) hits++;
     }
-    expect(hits).toBeGreaterThanOrEqual(19); // ≥ 95 %
+    expect(hits).toBe(20); // exact, mirroring pytest test_self_query_recall
   });
 
   it('batch vs individual query equivalence', () => {
@@ -320,6 +320,8 @@ describe('TurboQuantIndex.prepare + write + load', () => {
       for (let i = 0; i < origRes.indices.length; i++) {
         expect(loadRes.indices[i]).toBe(origRes.indices[i]);
       }
+      // Scores match too (pytest asserts np.allclose on scores).
+      assertClose(loadRes.scores, origRes.scores);
     } finally {
       if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
     }
@@ -422,5 +424,76 @@ describe('TurboQuantIndex.search invalid query values', () => {
     } catch (e: any) {
       expect(e.code).toBe('INVALID_INPUT_VALUE');
     }
+  });
+});
+
+// ── numeric-argument validation (regression for ToUint32 wrapping) ────────
+//
+// napi's raw u32 conversion applies ECMAScript ToUint32: `-8` silently
+// becomes dim=4294967288 (whose dim×dim rotation matrix would abort the
+// process), `8.5` truncates to 8, and `-1` for k wraps to 4294967295. The
+// bindings now take f64 and reject non-integer / negative / out-of-range
+// values with INVALID_ARGUMENT before any of that can happen.
+
+describe('TurboQuantIndex numeric argument validation', () => {
+  function expectInvalidArgument(fn: () => unknown, param: string): void {
+    expect(fn).toThrow();
+    try {
+      fn();
+    } catch (e: any) {
+      expect(e.code).toBe('INVALID_ARGUMENT');
+      expect(e.message).toContain(param);
+    }
+  }
+
+  it('negative dim throws INVALID_ARGUMENT (not a 4-billion-dim index)', () => {
+    expectInvalidArgument(() => new TurboQuantIndex(-8), 'dim');
+  });
+
+  it('fractional dim throws INVALID_ARGUMENT (no silent truncation)', () => {
+    expectInvalidArgument(() => new TurboQuantIndex(8.5), 'dim');
+  });
+
+  it('dim above MAX_DIM (65536) throws INVALID_ARGUMENT', () => {
+    expectInvalidArgument(() => new TurboQuantIndex(65544), 'dim');
+  });
+
+  it('dim of exactly MAX_DIM (65536) is accepted', () => {
+    const idx = new TurboQuantIndex(65536);
+    expect(idx.dim).toBe(65536);
+  });
+
+  it('negative bitWidth throws INVALID_ARGUMENT', () => {
+    expectInvalidArgument(() => new TurboQuantIndex(8, -4), 'bitWidth');
+  });
+
+  it('negative k throws INVALID_ARGUMENT (no wrap to 4294967295)', () => {
+    const idx = new TurboQuantIndex(8, 4);
+    idx.add(unitVectors(2, 8));
+    expectInvalidArgument(() => idx.search(unitVectors(1, 8), -1), 'k');
+  });
+
+  it('fractional k throws INVALID_ARGUMENT', () => {
+    const idx = new TurboQuantIndex(8, 4);
+    idx.add(unitVectors(2, 8));
+    expectInvalidArgument(() => idx.search(unitVectors(1, 8), 1.5), 'k');
+  });
+
+  it('non-finite k throws INVALID_ARGUMENT', () => {
+    const idx = new TurboQuantIndex(8, 4);
+    idx.add(unitVectors(2, 8));
+    expectInvalidArgument(() => idx.search(unitVectors(1, 8), NaN), 'k');
+    expectInvalidArgument(() => idx.search(unitVectors(1, 8), Infinity), 'k');
+  });
+
+  it('negative dim on a lazy add throws INVALID_ARGUMENT', () => {
+    const idx = new TurboQuantIndex();
+    expectInvalidArgument(() => idx.add(unitVectors(1, 8), -8), 'dim');
+  });
+
+  it('negative swapRemove idx throws INVALID_ARGUMENT', () => {
+    const idx = new TurboQuantIndex(8, 4);
+    idx.add(unitVectors(2, 8));
+    expectInvalidArgument(() => idx.swapRemove(-1), 'idx');
   });
 });

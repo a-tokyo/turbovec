@@ -26,6 +26,21 @@ use std::fs::File;
 use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::Path;
 
+/// Maximum permitted vector dimensionality.
+///
+/// The search engine materialises a `dim × dim` f64 rotation matrix, so an
+/// unbounded header dim is an unbounded allocation: a ~22-byte crafted file
+/// claiming `dim = 2^20` would pass the multiple-of-8 check and then abort
+/// the process on an 8 TiB rotation-matrix allocation at first
+/// prepare/search. 65 536 gives ~5× headroom over the largest real
+/// embedding dims in the wild (~12k) while bounding the rotation matrix
+/// to a survivable worst case.
+///
+/// Exposed publicly so the napi/PyO3 bindings can reuse it as their
+/// constructor/add `dim` bound (rejecting before the FFI crossing) instead
+/// of hardcoding a copy that could silently drift from this value.
+pub const MAX_DIM: usize = 65_536;
+
 const TV_MAGIC: &[u8; 4] = b"TVPI";
 const TV_VERSION: u8 = 3;
 const TVIM_MAGIC: &[u8; 4] = b"TVIM";
@@ -294,6 +309,14 @@ fn read_header_codes_scales<R: Read>(
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("invalid dim {dim}: must be a multiple of 8"),
+        ));
+    } else if dim > MAX_DIM {
+        // A crafted header can claim a huge-but-multiple-of-8 dim that
+        // loads cleanly and only aborts later on the dim × dim rotation
+        // matrix allocation. Bound it here, at the read layer.
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid dim {dim}: exceeds the maximum supported dim {MAX_DIM}"),
         ));
     }
 

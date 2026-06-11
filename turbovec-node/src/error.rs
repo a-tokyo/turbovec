@@ -131,6 +131,24 @@ pub fn io_error(e: &std::io::Error) -> napi::Error<ErrCode> {
     err("IO_ERROR", format!("{e}"))
 }
 
+/// Validate a JS number destined for an unsigned-integer parameter.
+///
+/// napi's native `u32` conversion applies ECMAScript ToUint32 (truncate,
+/// then wrap modulo 2^32), so `-8` silently becomes `4294967288` and `8.5`
+/// becomes `8`. Binding methods therefore take `f64` and funnel every
+/// numeric argument through here: non-finite, fractional, negative, or
+/// out-of-range values are rejected with `INVALID_ARGUMENT` naming the
+/// parameter and the offending value; valid ones are cast to `usize`.
+pub fn checked_uint_arg(name: &str, value: f64, max: usize) -> napi::Result<usize, ErrCode> {
+    if !value.is_finite() || value.fract() != 0.0 || value < 0.0 || value > max as f64 {
+        return Err(err(
+            "INVALID_ARGUMENT",
+            format!("{name} must be a non-negative integer <= {max}, got {value}"),
+        ));
+    }
+    Ok(value as usize)
+}
+
 pub fn invalid_query_value(
     query_index: usize,
     coord_index: usize,

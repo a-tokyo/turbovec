@@ -172,6 +172,16 @@ describe('IdMapIndex.search', () => {
     }
   });
 
+  it('throws DIM_REQUIRED for non-empty search on lazy uninitialized index', () => {
+    const idx = new IdMapIndex();
+    expect(() => idx.search(unitVectors(1, 128), 1)).toThrow();
+    try {
+      idx.search(unitVectors(1, 128), 1);
+    } catch (e: any) {
+      expect(e.code).toBe('DIM_REQUIRED');
+    }
+  });
+
   it('empty queries shape contract matches TurboQuantIndex', () => {
     const dim = 64;
     const tq = new TurboQuantIndex(dim, 4);
@@ -393,5 +403,63 @@ describe('IdMapIndex.remove / contains — negative and oversized BigInt', () =>
     idx.addWithIds(unitVectors(2, 8, 0), BigUint64Array.from([1n, 2n]));
     expect(idx.remove(2n ** 70n)).toBe(false);
     expect(idx.length).toBe(2);
+  });
+});
+
+// ── numeric-argument validation (regression for ToUint32 wrapping) ────────
+//
+// Twin of the TurboQuantIndex block in index.test.ts: napi's raw u32
+// conversion ToUint32-wraps negative/fractional JS numbers, so the bindings
+// take f64 and reject them with INVALID_ARGUMENT at the boundary.
+
+describe('IdMapIndex numeric argument validation', () => {
+  function expectInvalidArgument(fn: () => unknown, param: string): void {
+    expect(fn).toThrow();
+    try {
+      fn();
+    } catch (e: any) {
+      expect(e.code).toBe('INVALID_ARGUMENT');
+      expect(e.message).toContain(param);
+    }
+  }
+
+  function makeIdIndex(dim: number): IdMapIndex {
+    const idx = new IdMapIndex(dim, 4);
+    idx.addWithIds(unitVectors(2, dim), BigUint64Array.from([1n, 2n]));
+    return idx;
+  }
+
+  it('negative dim throws INVALID_ARGUMENT (not a 4-billion-dim index)', () => {
+    expectInvalidArgument(() => new IdMapIndex(-8), 'dim');
+  });
+
+  it('fractional dim throws INVALID_ARGUMENT (no silent truncation)', () => {
+    expectInvalidArgument(() => new IdMapIndex(8.5), 'dim');
+  });
+
+  it('dim above MAX_DIM (65536) throws INVALID_ARGUMENT', () => {
+    expectInvalidArgument(() => new IdMapIndex(65544), 'dim');
+  });
+
+  it('negative bitWidth throws INVALID_ARGUMENT', () => {
+    expectInvalidArgument(() => new IdMapIndex(8, -4), 'bitWidth');
+  });
+
+  it('negative k throws INVALID_ARGUMENT (no wrap to 4294967295)', () => {
+    const idx = makeIdIndex(8);
+    expectInvalidArgument(() => idx.search(unitVectors(1, 8), -1), 'k');
+  });
+
+  it('fractional k throws INVALID_ARGUMENT', () => {
+    const idx = makeIdIndex(8);
+    expectInvalidArgument(() => idx.search(unitVectors(1, 8), 1.5), 'k');
+  });
+
+  it('negative dim on a lazy addWithIds throws INVALID_ARGUMENT', () => {
+    const idx = new IdMapIndex();
+    expectInvalidArgument(
+      () => idx.addWithIds(unitVectors(1, 8), BigUint64Array.from([1n]), -8),
+      'dim',
+    );
   });
 });

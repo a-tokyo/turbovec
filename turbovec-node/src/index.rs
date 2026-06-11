@@ -4,14 +4,15 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
 use crate::error::{
-    dim_required, index_out_of_range, invalid_query_value, io_error, map_add_error,
-    map_construct_error, mask_length_mismatch, query_dim_mismatch, ErrCode,
+    checked_uint_arg, dim_required, index_out_of_range, invalid_query_value, io_error,
+    map_add_error, map_construct_error, mask_length_mismatch, query_dim_mismatch, ErrCode,
 };
 
 /// Reused from core: any query coordinate with `|value| >= MAX_INPUT_MAGNITUDE`
 /// (or that is non-finite) will panic in the core search kernel; we reject it
-/// here before crossing the FFI boundary.
-use turbovec_core::MAX_INPUT_MAGNITUDE;
+/// here before crossing the FFI boundary. `MAX_DIM` bounds `dim` the same way
+/// the core read layer bounds it for serialized headers.
+use turbovec_core::{MAX_DIM, MAX_INPUT_MAGNITUDE};
 
 // We want the proc-macro to see a literal `Result` path segment so it
 // sets `is_ret_result = true` and generates the correct match-based
@@ -56,14 +57,22 @@ impl TurboQuantIndex {
     /// - `bitWidth` — quantisation precision: `2`, `3`, or `4` (default `4`).
     #[napi(constructor)]
     pub fn new(
-        dim: Option<u32>,
-        bit_width: Option<u32>,
+        dim: Option<f64>,
+        bit_width: Option<f64>,
     ) -> napi::Result<Self, ErrCode> {
-        let bw = bit_width.unwrap_or(4) as usize;
+        // Validate at the boundary (see `checked_uint_arg`): napi's raw u32
+        // conversion would ToUint32-wrap `-8` into a ~4-billion dim whose
+        // dim × dim rotation matrix aborts the process. `bitWidth` only
+        // needs to fit a byte here — the core then enforces 2..=4 with
+        // BIT_WIDTH_OUT_OF_RANGE.
+        let bw = match bit_width {
+            Some(b) => checked_uint_arg("bitWidth", b, u8::MAX as usize)?,
+            None => 4,
+        };
         let inner = match dim {
             Some(d) => {
-                turbovec_core::TurboQuantIndex::new(d as usize, bw)
-                    .map_err(map_construct_error)?
+                let d = checked_uint_arg("dim", d, MAX_DIM)?;
+                turbovec_core::TurboQuantIndex::new(d, bw).map_err(map_construct_error)?
             }
             None => turbovec_core::TurboQuantIndex::new_lazy(bw).map_err(map_construct_error)?,
         };
@@ -79,14 +88,17 @@ impl TurboQuantIndex {
     pub fn add(
         &mut self,
         vectors: Float32Array,
-        dim: Option<u32>,
+        dim: Option<f64>,
     ) -> napi::Result<(), ErrCode> {
+        let dim = match dim {
+            Some(d) => Some(checked_uint_arg("dim", d, MAX_DIM)?),
+            None => None,
+        };
         let effective_dim: usize = match self.inner.dim_opt() {
             Some(d) => {
                 // If caller explicitly passed a conflicting dim, surface it
                 // as DIM_MISMATCH rather than silently ignoring it.
                 if let Some(caller_dim) = dim {
-                    let caller_dim = caller_dim as usize;
                     if caller_dim != d {
                         return Err(crate::error::map_add_error(
                             turbovec_core::AddError::DimMismatch {
@@ -99,7 +111,7 @@ impl TurboQuantIndex {
                 d
             }
             None => match dim {
-                Some(d) => d as usize,
+                Some(d) => d,
                 None => return Err(dim_required()),
             },
         };
@@ -129,11 +141,20 @@ impl TurboQuantIndex {
     pub fn search(
         &self,
         queries: Float32Array,
-        k: u32,
+        k: f64,
         options: Option<SearchOptions>,
     ) -> napi::Result<SearchResult, ErrCode> {
-        let k = k as usize;
-        let q_slice: &[f32] = &queries;
+        let k = checked_uint_arg("k", k, u32::MAX as usize)?;
+
+        // Snapshot the borrowed query buffer BEFORE validating it. A
+        // SharedArrayBuffer-backed Float32Array can be mutated by a Worker
+        // thread between our validation and the core scan (TOCTOU), and the
+        // core re-validates and panics on NaN — which aborts the Node
+        // process across the FFI boundary. Copying first means the bytes we
+        // validate are exactly the bytes we search; the copy is cheap
+        // relative to the scan itself.
+        let queries_owned: Vec<f32> = queries.to_vec();
+        let q_slice: &[f32] = &queries_owned;
 
         // Derive nq — requires a committed dim for non-empty queries.
         let nq: usize = if q_slice.is_empty() {
@@ -201,8 +222,8 @@ impl TurboQuantIndex {
     /// Returns the old index of the moved vector.
     /// Throws `INDEX_OUT_OF_RANGE` if `idx >= this.length`.
     #[napi(js_name = "swapRemove")]
-    pub fn swap_remove(&mut self, idx: u32) -> napi::Result<u32, ErrCode> {
-        let idx = idx as usize;
+    pub fn swap_remove(&mut self, idx: f64) -> napi::Result<u32, ErrCode> {
+        let idx = checked_uint_arg("idx", idx, u32::MAX as usize)?;
         let len = self.inner.len();
         if idx >= len {
             return Err(index_out_of_range(idx, len));

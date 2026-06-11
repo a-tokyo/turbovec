@@ -103,7 +103,7 @@ const { scores, indices, k } = idx.search(queries, 10, { mask });
 
 | Member | Notes |
 |---|---|
-| `new TurboQuantIndex(dim?, bitWidth?)` | `bitWidth ∈ {2,3,4}` (default 4). `dim` optional (positive multiple of 8); omit for a lazy index. |
+| `new TurboQuantIndex(dim?, bitWidth?)` | `bitWidth ∈ {2,3,4}` (default 4). `dim` optional (positive multiple of 8, ≤ `MAX_DIM` = 65 536); omit for a lazy index. |
 | `add(vectors, dim?)` | `vectors`: flat row-major `Float32Array` of length `n*dim`. `dim` required on the first add of a lazy index. |
 | `search(queries, k, { mask? })` | Returns `{ scores: Float32Array, indices: BigInt64Array, nq, k }`. `mask` is a `boolean[]` of length `this.length`. |
 | `swapRemove(idx)` | O(1); returns the prior slot of the moved vector. Throws `INDEX_OUT_OF_RANGE` if `idx >= this.length`. |
@@ -147,7 +147,7 @@ idx.add_with_ids(vectors, ids)           # locks dim to vectors.shape[1]
 | `IdMapIndex(dim=None, bit_width=4)` | `dim` is optional; when omitted it is inferred from the first `add_with_ids` call. |
 | `add_with_ids(vectors, ids)` | `ids` is a `uint64` array with length `vectors.shape[0]`. On a lazy index the first call locks `dim`. Raises `ValueError` on dim mismatch, duplicate ids, or `len(ids) != vectors.shape[0]`. |
 | `remove(id) -> bool` | `True` if the id was present and removed, `False` otherwise. O(1). |
-| `search(queries, k, *, allowlist=None)` | Returns `(scores, ids)` — `ids` are `uint64` external ids. `allowlist` is an optional `uint64` array of ids; when given, results are restricted to those ids and `effective_k = min(k, len(allowlist))`. Raises `ValueError` on empty allowlist and `KeyError` on unknown ids. |
+| `search(queries, k, *, allowlist=None)` | Returns `(scores, ids)` — `ids` are `uint64` external ids. `allowlist` is an optional `uint64` array of ids; when given, results are restricted to those ids and `effective_k = min(k, len(allowlist) after de-duplication)`. Raises `ValueError` on empty allowlist and `KeyError` on unknown ids. |
 | `contains(id)` / `id in idx` | Membership. |
 | `write(path)` / `load(path)` | `.tvim` format. |
 | `len(idx)` / `idx.dim` / `idx.bit_width` / `prepare()` | Same as `TurboQuantIndex`. |
@@ -195,12 +195,12 @@ Filtered search uses an `allowlist` of external ids (`BigUint64Array`):
 ```js
 const allowed = BigUint64Array.from([1003n, 1010n, 1042n]);
 const { scores, ids, k } = idx.search(queries, 10, { allowlist: allowed });
-// k = min(requestedK, allowed.length); throws ALLOWLIST_EMPTY / ALLOWLIST_UNKNOWN_ID on bad input
+// k = min(requestedK, allowed.length after de-duplication); throws ALLOWLIST_EMPTY / ALLOWLIST_UNKNOWN_ID on bad input
 ```
 
 | Member | Notes |
 |---|---|
-| `new IdMapIndex(dim?, bitWidth?)` | Same `dim`/`bitWidth` semantics as `TurboQuantIndex`. |
+| `new IdMapIndex(dim?, bitWidth?)` | Same `dim`/`bitWidth` semantics as `TurboQuantIndex` (positive multiple of 8, ≤ `MAX_DIM` = 65 536). |
 | `addWithIds(vectors, ids, dim?)` | `vectors`: flat `Float32Array`. `ids`: `BigUint64Array`, element count = `vectors.length / dim`. `dim` required on first lazy add. |
 | `search(queries, k, { allowlist? })` | Returns `{ scores: Float32Array, ids: BigUint64Array, nq, k }`. `allowlist` is a `BigUint64Array` of external ids. |
 | `remove(id)` → `boolean` | `id: bigint`. `true` if present and removed. O(1). |
@@ -227,8 +227,9 @@ Errors thrown by the native layer carry a stable string `err.code` so callers ca
 | `ALLOWLIST_EMPTY` | An empty `allowlist` was supplied to `search`. |
 | `ALLOWLIST_UNKNOWN_ID` | An `allowlist` id is not present in the index. |
 | `INDEX_OUT_OF_RANGE` | `swapRemove(idx)` called with `idx >= index.length`. |
-| `DIM_REQUIRED` | First add on a lazy index without a `dim` argument. |
+| `DIM_REQUIRED` | First add on a lazy index without a `dim` argument; or a non-empty `search` on a lazy index before any `add` has committed a dim. Note: Python returns an empty `(nq, 0)` result in this case; JS throws instead. |
 | `IO_ERROR` | A `write` / `load` filesystem or deserialization error. |
+| `INVALID_ARGUMENT` | A numeric constructor or method argument is negative, fractional, non-finite, or exceeds the allowed range (e.g. `dim > MAX_DIM`, `k < 0`). Python raises `OverflowError` in equivalent cases. |
 | `GENERIC_FAILURE` | Internal napi-rs runtime failure (e.g. allocation failure); not normally reachable from user code. |
 
 ---
