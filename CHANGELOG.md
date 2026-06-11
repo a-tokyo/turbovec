@@ -4,12 +4,59 @@ All notable changes to turbovec are recorded here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-The Rust crate (`turbovec` on crates.io) and the Python distribution
-(`turbovec` on PyPI) version independently. Each release section below
-is split by surface — a single feature can affect both, and its bullet
-appears under each surface it touches.
+The Rust crate (`turbovec` on crates.io), the Python distribution
+(`turbovec` on PyPI), and the Node.js package (`turbovec` on npm) version
+independently. Each release section below is split by surface — a single
+feature can affect more than one, and its bullet appears under each surface
+it touches.
 
 ## [Unreleased]
+
+### turbovec — Node.js package (npm) — UNRELEASED (0.0.0 placeholder, not yet published)
+
+> Not yet published to npm. The package version is pinned to the `0.0.0`
+> placeholder; the npm semver stream starts at the first published release.
+> No on-disk format change — the native bindings read/write the same
+> `.tv` / `.tvim` v3 files as the Rust crate and Python package.
+
+#### Added
+
+- **Native Node.js bindings** via [napi-rs](https://napi.rs/), exposing the
+  same two index types as the Rust crate and Python package:
+  - `TurboQuantIndex` — positional index, O(1) `swapRemove`.
+  - `IdMapIndex` — stable external `u64` ids (as `bigint`), O(1) `remove`.
+
+  Vectors are flat row-major `Float32Array`s (length `n * dim`); ids are
+  `BigUint64Array` / `bigint`. `search` returns flat typed arrays plus
+  `{ nq, k }` (row `i` is `result.scores.slice(i*k, (i+1)*k)`); `indices`
+  is a `BigInt64Array`, `ids` a `BigUint64Array`. Errors carry a stable
+  `err.code` string (`DIM_MISMATCH`, `DIM_REQUIRED`, `ALLOWLIST_UNKNOWN_ID`,
+  …; full table in `docs/api.md`). The one documented divergence from the
+  Python API: a lazy index has no numpy shape to infer from, so the first
+  `add` on a lazy index must pass `dim` explicitly or it throws
+  `DIM_REQUIRED`. Query/vector finiteness is pre-validated at the binding
+  boundary so a non-finite input surfaces as `INVALID_INPUT_VALUE` rather
+  than aborting the process across the FFI boundary.
+
+- **LangChain.js integration** (`turbovec/langchain`). `TurbovecVectorStore`
+  implements `@langchain/core`'s `VectorStore` surface as a drop-in for the
+  in-memory store, and is the JS twin of the Python
+  `turbovec.langchain.TurboQuantVectorStore` — sharing a byte-compatible
+  `docstore.json` side-car format. `@langchain/core` is an optional peer
+  dependency.
+
+- **LlamaIndex.TS integration** (`turbovec/llamaindex`). `TurbovecVectorStore`
+  implements `@llamaindex/core`'s `BaseVectorStore` surface as a drop-in for
+  `SimpleVectorStore`, operating on pre-computed embeddings
+  (`isEmbeddingQuery = true`). `@llamaindex/core` is an optional peer
+  dependency.
+
+- **Multi-platform prebuilt binaries** selected automatically via
+  `optionalDependencies`: linux x64 (gnu), linux arm64 (gnu), macOS arm64,
+  and Windows x64. The Linux binaries statically link BLAS, so they are
+  self-contained and require no system libraries at runtime. x64 binaries
+  target the `x86-64-v3` baseline (AVX2, Haswell 2013+), matching the crate
+  and Python wheels; the AVX-512 kernel is gated at runtime.
 
 ## turbovec 0.7.1 (Python package) + turbovec 0.8.1 (Rust crate) — 2026-06-09
 
