@@ -1,34 +1,34 @@
 /**
  * Tests for IdMapIndex — mirrors turbovec-python/tests/test_id_map.py.
  */
-import { describe, it, expect } from "vitest";
-import * as os from "os";
-import * as path from "path";
-import * as fs from "fs";
-import { IdMapIndex, TurboQuantIndex } from "../index.js";
-import { unitVectors, row } from "./helpers.js";
+import { describe, it, expect } from 'vitest';
+import * as os from 'os';
+import * as path from 'path';
+import * as fs from 'fs';
+import { IdMapIndex, TurboQuantIndex } from '../index.js';
+import { unitVectors } from './helpers.js';
 
 // ── Constructor ───────────────────────────────────────────────────────────
 
-describe("IdMapIndex constructor", () => {
-  it("rejects bad bit_width", () => {
+describe('IdMapIndex constructor', () => {
+  it('rejects bad bit_width', () => {
     for (const bw of [0, 1, 5, 8]) {
       expect(() => new IdMapIndex(128, bw)).toThrow();
       try {
         new IdMapIndex(128, bw);
       } catch (e: any) {
-        expect(e.code).toBe("BIT_WIDTH_OUT_OF_RANGE");
+        expect(e.code).toBe('BIT_WIDTH_OUT_OF_RANGE');
       }
     }
   });
 
-  it("rejects dim not multiple of 8", () => {
+  it('rejects dim not multiple of 8', () => {
     for (const d of [0, 1, 4, 7, 9]) {
       expect(() => new IdMapIndex(d, 4)).toThrow();
       try {
         new IdMapIndex(d, 4);
       } catch (e: any) {
-        expect(e.code).toBe("DIM_NOT_POSITIVE_MULTIPLE_OF_8");
+        expect(e.code).toBe('DIM_NOT_POSITIVE_MULTIPLE_OF_8');
       }
     }
   });
@@ -36,8 +36,8 @@ describe("IdMapIndex constructor", () => {
 
 // ── addWithIds ────────────────────────────────────────────────────────────
 
-describe("IdMapIndex.addWithIds", () => {
-  it("updates length and contains", () => {
+describe('IdMapIndex.addWithIds', () => {
+  it('updates length and contains', () => {
     const idx = new IdMapIndex(128, 4);
     const vecs = unitVectors(5, 128);
     idx.addWithIds(vecs, BigUint64Array.from([10n, 20n, 30n, 40n, 50n]));
@@ -46,39 +46,35 @@ describe("IdMapIndex.addWithIds", () => {
     expect(idx.contains(99n)).toBe(false);
   });
 
-  it("incremental add works", () => {
+  it('incremental add works', () => {
     const idx = new IdMapIndex(128, 4);
     idx.addWithIds(unitVectors(3, 128, 0), BigUint64Array.from([1n, 2n, 3n]));
     idx.addWithIds(unitVectors(2, 128, 1), BigUint64Array.from([4n, 5n]));
     expect(idx.length).toBe(5);
   });
 
-  it("throws ID_ALREADY_PRESENT for duplicate id", () => {
+  it('throws ID_ALREADY_PRESENT for duplicate id', () => {
     const idx = new IdMapIndex(128, 4);
     idx.addWithIds(unitVectors(2, 128), BigUint64Array.from([1n, 2n]));
-    expect(() =>
-      idx.addWithIds(unitVectors(1, 128, 1), BigUint64Array.from([2n]))
-    ).toThrow();
+    expect(() => idx.addWithIds(unitVectors(1, 128, 1), BigUint64Array.from([2n]))).toThrow();
     try {
       idx.addWithIds(unitVectors(1, 128, 1), BigUint64Array.from([2n]));
     } catch (e: any) {
-      expect(e.code).toBe("ID_ALREADY_PRESENT");
+      expect(e.code).toBe('ID_ALREADY_PRESENT');
     }
   });
 
-  it("throws IDS_COUNT_MISMATCH when ids.length != n_vectors", () => {
+  it('throws IDS_COUNT_MISMATCH when ids.length != n_vectors', () => {
     const idx = new IdMapIndex(128, 4);
-    expect(() =>
-      idx.addWithIds(unitVectors(3, 128), BigUint64Array.from([1n, 2n]))
-    ).toThrow();
+    expect(() => idx.addWithIds(unitVectors(3, 128), BigUint64Array.from([1n, 2n]))).toThrow();
     try {
       idx.addWithIds(unitVectors(3, 128), BigUint64Array.from([1n, 2n]));
     } catch (e: any) {
-      expect(e.code).toBe("IDS_COUNT_MISMATCH");
+      expect(e.code).toBe('IDS_COUNT_MISMATCH');
     }
   });
 
-  it("throws INVALID_INPUT_VALUE for NaN vector", () => {
+  it('throws INVALID_INPUT_VALUE for NaN vector', () => {
     const idx = new IdMapIndex(64, 4);
     const data = unitVectors(1, 64).slice();
     data[5] = NaN;
@@ -86,27 +82,25 @@ describe("IdMapIndex.addWithIds", () => {
     try {
       idx.addWithIds(data, BigUint64Array.from([1n]));
     } catch (e: any) {
-      expect(e.code).toBe("INVALID_INPUT_VALUE");
+      expect(e.code).toBe('INVALID_INPUT_VALUE');
     }
   });
 
-  it("lazy index throws DIM_REQUIRED without dim arg", () => {
+  it('lazy index throws DIM_REQUIRED without dim arg', () => {
     const idx = new IdMapIndex();
-    expect(() =>
-      idx.addWithIds(unitVectors(1, 128), BigUint64Array.from([1n]))
-    ).toThrow();
+    expect(() => idx.addWithIds(unitVectors(1, 128), BigUint64Array.from([1n]))).toThrow();
     try {
       idx.addWithIds(unitVectors(1, 128), BigUint64Array.from([1n]));
     } catch (e: any) {
-      expect(e.code).toBe("DIM_REQUIRED");
+      expect(e.code).toBe('DIM_REQUIRED');
     }
   });
 });
 
 // ── remove / contains ─────────────────────────────────────────────────────
 
-describe("IdMapIndex.remove", () => {
-  it("returns true if present, false otherwise", () => {
+describe('IdMapIndex.remove', () => {
+  it('returns true if present, false otherwise', () => {
     const idx = new IdMapIndex(128, 4);
     idx.addWithIds(unitVectors(3, 128), BigUint64Array.from([1n, 2n, 3n]));
     expect(idx.remove(2n)).toBe(true);
@@ -115,25 +109,20 @@ describe("IdMapIndex.remove", () => {
     expect(idx.remove(999n)).toBe(false); // never existed
   });
 
-  it("remove then re-add same id", () => {
+  it('remove then re-add same id', () => {
     const idx = new IdMapIndex(128, 4);
-    idx.addWithIds(
-      unitVectors(5, 128),
-      BigUint64Array.from([1n, 2n, 3n, 4n, 5n])
-    );
+    idx.addWithIds(unitVectors(5, 128), BigUint64Array.from([1n, 2n, 3n, 4n, 5n]));
     expect(idx.remove(3n)).toBe(true);
     idx.addWithIds(unitVectors(1, 128, 42), BigUint64Array.from([3n]));
     expect(idx.contains(3n)).toBe(true);
     expect(idx.length).toBe(5);
   });
 
-  it("remaining ids self-query after removes", () => {
+  it('remaining ids self-query after removes', () => {
     const dim = 256;
     const idx = new IdMapIndex(dim, 4);
     const vecs = unitVectors(15, dim, 0);
-    const ids = BigUint64Array.from(
-      Array.from({ length: 15 }, (_, i) => BigInt(i * 7 + 11))
-    );
+    const ids = BigUint64Array.from(Array.from({ length: 15 }, (_, i) => BigInt(i * 7 + 11)));
     idx.addWithIds(vecs, ids);
 
     const removedPositions = new Set([5, 14, 0]);
@@ -150,14 +139,12 @@ describe("IdMapIndex.remove", () => {
 
 // ── search ────────────────────────────────────────────────────────────────
 
-describe("IdMapIndex.search", () => {
-  it("returns external ids", () => {
+describe('IdMapIndex.search', () => {
+  it('returns external ids', () => {
     const dim = 256;
     const idx = new IdMapIndex(dim, 4);
     const vecs = unitVectors(10, dim, 0);
-    const ids = BigUint64Array.from(
-      Array.from({ length: 10 }, (_, i) => BigInt(1_000_000 + i))
-    );
+    const ids = BigUint64Array.from(Array.from({ length: 10 }, (_, i) => BigInt(1_000_000 + i)));
     idx.addWithIds(vecs, ids);
 
     const res = idx.search(vecs, 1);
@@ -166,25 +153,25 @@ describe("IdMapIndex.search", () => {
     }
   });
 
-  it("empty eager index returns k=0", () => {
+  it('empty eager index returns k=0', () => {
     const idx = new IdMapIndex(128, 4);
     const res = idx.search(unitVectors(1, 128), 3);
     expect(res.k).toBe(0);
     expect(res.ids.length).toBe(0);
   });
 
-  it("throws QUERY_DIM_MISMATCH for wrong-dim queries", () => {
+  it('throws QUERY_DIM_MISMATCH for wrong-dim queries', () => {
     const idx = new IdMapIndex(128, 4);
     idx.addWithIds(unitVectors(3, 128), BigUint64Array.from([1n, 2n, 3n]));
     expect(() => idx.search(unitVectors(1, 64), 1)).toThrow();
     try {
       idx.search(unitVectors(1, 64), 1);
     } catch (e: any) {
-      expect(e.code).toBe("QUERY_DIM_MISMATCH");
+      expect(e.code).toBe('QUERY_DIM_MISMATCH');
     }
   });
 
-  it("empty queries shape contract matches TurboQuantIndex", () => {
+  it('empty queries shape contract matches TurboQuantIndex', () => {
     const dim = 64;
     const tq = new TurboQuantIndex(dim, 4);
     const im = new IdMapIndex(dim, 4);
@@ -201,7 +188,7 @@ describe("IdMapIndex.search", () => {
     expect(imRes.k).toBe(3);
   });
 
-  it("bigint id > 2^53 round-trips losslessly", () => {
+  it('bigint id > 2^53 round-trips losslessly', () => {
     const dim = 64;
     const idx = new IdMapIndex(dim, 4);
     // Use an id well above Number.MAX_SAFE_INTEGER
@@ -215,14 +202,11 @@ describe("IdMapIndex.search", () => {
     expect(res.ids[0]).toBe(bigId); // exact bigint equality
   });
 
-  it("empty-queries effective_k dedups allowlist", () => {
+  it('empty-queries effective_k dedups allowlist', () => {
     // Mirrors test_search_empty_queries_dedups_allowlist_for_effective_k
     const dim = 64;
     const idx = new IdMapIndex(dim, 4);
-    idx.addWithIds(
-      unitVectors(3, dim),
-      BigUint64Array.from([10n, 20n, 30n])
-    );
+    idx.addWithIds(unitVectors(3, dim), BigUint64Array.from([10n, 20n, 30n]));
 
     // allowlist with 3 copies of the same id — effective n_allowed = 1
     const al = BigUint64Array.from([10n, 10n, 10n]);
@@ -243,14 +227,12 @@ describe("IdMapIndex.search", () => {
 
 // ── write / load ──────────────────────────────────────────────────────────
 
-describe("IdMapIndex.write + load", () => {
-  it("write/load round-trip with removes", () => {
+describe('IdMapIndex.write + load', () => {
+  it('write/load round-trip with removes', () => {
     const dim = 256;
     const idx = new IdMapIndex(dim, 4);
     const vecs = unitVectors(10, dim, 0);
-    const ids = BigUint64Array.from(
-      Array.from({ length: 10 }, (_, i) => BigInt(5000 + i))
-    );
+    const ids = BigUint64Array.from(Array.from({ length: 10 }, (_, i) => BigInt(5000 + i)));
     idx.addWithIds(vecs, ids);
     idx.remove(5004n);
     idx.remove(5007n);
@@ -278,64 +260,62 @@ describe("IdMapIndex.write + load", () => {
     }
   });
 
-  it("load nonexistent file throws IO_ERROR", () => {
-    expect(() =>
-      IdMapIndex.load("/nonexistent/path/does-not-exist.tvim")
-    ).toThrow();
+  it('load nonexistent file throws IO_ERROR', () => {
+    expect(() => IdMapIndex.load('/nonexistent/path/does-not-exist.tvim')).toThrow();
     try {
-      IdMapIndex.load("/nonexistent/path/does-not-exist.tvim");
+      IdMapIndex.load('/nonexistent/path/does-not-exist.tvim');
     } catch (e: any) {
-      expect(e.code).toBe("IO_ERROR");
+      expect(e.code).toBe('IO_ERROR');
     }
   });
 });
 
 // ── query finiteness pre-validation (regression for SIGABRT bug) ──────────
 
-describe("IdMapIndex.search invalid query values", () => {
+describe('IdMapIndex.search invalid query values', () => {
   function makeIdIndex(dim: number): IdMapIndex {
     const idx = new IdMapIndex(dim, 4);
     idx.addWithIds(
       unitVectors(8, dim, 1),
-      BigUint64Array.from(Array.from({ length: 8 }, (_, i) => BigInt(i + 1)))
+      BigUint64Array.from(Array.from({ length: 8 }, (_, i) => BigInt(i + 1))),
     );
     return idx;
   }
 
-  it("NaN query throws INVALID_INPUT_VALUE — process survives", () => {
+  it('NaN query throws INVALID_INPUT_VALUE — process survives', () => {
     const idx = makeIdIndex(8);
     const q = new Float32Array([NaN, 1, 1, 1, 1, 1, 1, 1]);
     expect(() => idx.search(q, 1)).toThrow();
     try {
       idx.search(q, 1);
     } catch (e: any) {
-      expect(e.code).toBe("INVALID_INPUT_VALUE");
+      expect(e.code).toBe('INVALID_INPUT_VALUE');
     }
   });
 
-  it("Infinity query throws INVALID_INPUT_VALUE — process survives", () => {
+  it('Infinity query throws INVALID_INPUT_VALUE — process survives', () => {
     const idx = makeIdIndex(8);
     const q = new Float32Array([Infinity, 1, 1, 1, 1, 1, 1, 1]);
     expect(() => idx.search(q, 1)).toThrow();
     try {
       idx.search(q, 1);
     } catch (e: any) {
-      expect(e.code).toBe("INVALID_INPUT_VALUE");
+      expect(e.code).toBe('INVALID_INPUT_VALUE');
     }
   });
 
-  it("1e20 query throws INVALID_INPUT_VALUE — process survives", () => {
+  it('1e20 query throws INVALID_INPUT_VALUE — process survives', () => {
     const idx = makeIdIndex(8);
     const q = new Float32Array([1e20, 1, 1, 1, 1, 1, 1, 1]);
     expect(() => idx.search(q, 1)).toThrow();
     try {
       idx.search(q, 1);
     } catch (e: any) {
-      expect(e.code).toBe("INVALID_INPUT_VALUE");
+      expect(e.code).toBe('INVALID_INPUT_VALUE');
     }
   });
 
-  it("allowlist search: NaN query throws INVALID_INPUT_VALUE", () => {
+  it('allowlist search: NaN query throws INVALID_INPUT_VALUE', () => {
     const idx = makeIdIndex(8);
     const q = new Float32Array([NaN, 1, 1, 1, 1, 1, 1, 1]);
     const allowlist = BigUint64Array.from([1n, 2n, 3n]);
@@ -343,46 +323,40 @@ describe("IdMapIndex.search invalid query values", () => {
     try {
       idx.search(q, 1, { allowlist });
     } catch (e: any) {
-      expect(e.code).toBe("INVALID_INPUT_VALUE");
+      expect(e.code).toBe('INVALID_INPUT_VALUE');
     }
   });
 });
 
 // ── negative/out-of-range BigInt aliasing regression ─────────────────────
 
-describe("IdMapIndex.remove / contains — negative and oversized BigInt", () => {
-  it("remove(-1n) returns false and does NOT delete id 1n", () => {
+describe('IdMapIndex.remove / contains — negative and oversized BigInt', () => {
+  it('remove(-1n) returns false and does NOT delete id 1n', () => {
     const idx = new IdMapIndex(8, 4);
-    idx.addWithIds(
-      unitVectors(2, 8, 0),
-      BigUint64Array.from([1n, 2n])
-    );
+    idx.addWithIds(unitVectors(2, 8, 0), BigUint64Array.from([1n, 2n]));
     expect(idx.remove(-1n)).toBe(false);
-    expect(idx.length).toBe(2);      // nothing was removed
+    expect(idx.length).toBe(2); // nothing was removed
     expect(idx.contains(1n)).toBe(true);
     expect(idx.contains(2n)).toBe(true);
   });
 
-  it("contains(-1n) returns false while contains(1n) stays true", () => {
+  it('contains(-1n) returns false while contains(1n) stays true', () => {
     const idx = new IdMapIndex(8, 4);
     idx.addWithIds(unitVectors(1, 8, 0), BigUint64Array.from([1n]));
     expect(idx.contains(-1n)).toBe(false);
     expect(idx.contains(1n)).toBe(true);
   });
 
-  it("contains(-3n) returns false when index holds id 3n", () => {
+  it('contains(-3n) returns false when index holds id 3n', () => {
     const idx = new IdMapIndex(8, 4);
     idx.addWithIds(unitVectors(1, 8, 0), BigUint64Array.from([3n]));
     expect(idx.contains(-3n)).toBe(false);
     expect(idx.contains(3n)).toBe(true);
   });
 
-  it("remove(2n**70n) returns false (truncation guard)", () => {
+  it('remove(2n**70n) returns false (truncation guard)', () => {
     const idx = new IdMapIndex(8, 4);
-    idx.addWithIds(
-      unitVectors(2, 8, 0),
-      BigUint64Array.from([1n, 2n])
-    );
+    idx.addWithIds(unitVectors(2, 8, 0), BigUint64Array.from([1n, 2n]));
     expect(idx.remove(2n ** 70n)).toBe(false);
     expect(idx.length).toBe(2);
   });

@@ -9,12 +9,30 @@
   },
   "main": "index.js",
   "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./langchain": {
+      "import": {
+        "types": "./dist/langchain.d.mts",
+        "default": "./dist/langchain.js"
+      },
+      "require": {
+        "types": "./dist/langchain.d.ts",
+        "default": "./dist/langchain.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
   "engines": {
     "node": ">= 20"
   },
   "files": [
     "index.js",
     "index.d.ts",
+    "dist",
     "README.md"
   ],
   "napi": {
@@ -28,15 +46,36 @@
   },
   "scripts": {
     "build": "napi build --platform --release",
-    "pretest": "npm run build",
+    "build:ts": "tsup",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "pretest": "npm run build && npm run build:ts",
     "test": "vitest run",
+    "prepack": "npm run build:ts",
     "prepublishOnly": "napi prepublish -t npm"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@langchain/core": "^1.1.48",
     "@napi-rs/cli": "^3",
     "@types/node": "^22.19.21",
+    "eslint": "^10.4.1",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.8.4",
+    "tsup": "^8.5.1",
     "typescript": "^5",
+    "typescript-eslint": "^8.61.0",
     "vitest": "^2"
+  },
+  "peerDependencies": {
+    "@langchain/core": ">=0.3.11 <2"
+  },
+  "peerDependenciesMeta": {
+    "@langchain/core": {
+      "optional": true
+    }
   },
   "optionalDependencies": {
     "turbovec-linux-x64-gnu": "0.0.0",

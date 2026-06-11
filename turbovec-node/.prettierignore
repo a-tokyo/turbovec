@@ -1,0 +1,9 @@
+dist
+node_modules
+npm
+target
+src
+index.js
+index.d.ts
+package-lock.json
+*.node

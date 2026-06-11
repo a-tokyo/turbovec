@@ -1,24 +1,24 @@
 /**
  * Tests for TurboQuantIndex — mirrors turbovec-python/tests/test_index.py.
  */
-import { describe, it, expect } from "vitest";
-import * as os from "os";
-import * as path from "path";
-import * as fs from "fs";
-import { TurboQuantIndex } from "../index.js";
-import { unitVectors, row } from "./helpers.js";
+import { describe, it, expect } from 'vitest';
+import * as os from 'os';
+import * as path from 'path';
+import * as fs from 'fs';
+import { TurboQuantIndex } from '../index.js';
+import { unitVectors, row } from './helpers.js';
 
 // ── Constructor & basic getters ──────────────────────────────────────────
 
-describe("TurboQuantIndex constructor", () => {
-  it("reports dim and bit_width", () => {
+describe('TurboQuantIndex constructor', () => {
+  it('reports dim and bit_width', () => {
     const idx = new TurboQuantIndex(128, 4);
     expect(idx.dim).toBe(128);
     expect(idx.bitWidth).toBe(4);
     expect(idx.length).toBe(0);
   });
 
-  it.each([2, 3, 4])("accepts bit_width=%i", (bw) => {
+  it.each([2, 3, 4])('accepts bit_width=%i', (bw) => {
     const idx = new TurboQuantIndex(128, bw);
     expect(idx.bitWidth).toBe(bw);
     const vecs = unitVectors(20, 128);
@@ -26,29 +26,29 @@ describe("TurboQuantIndex constructor", () => {
     expect(idx.length).toBe(20);
   });
 
-  it("rejects bad bit_width", () => {
+  it('rejects bad bit_width', () => {
     for (const bw of [0, 1, 5, 8]) {
       expect(() => new TurboQuantIndex(128, bw)).toThrow();
       try {
         new TurboQuantIndex(128, bw);
       } catch (e: any) {
-        expect(e.code).toBe("BIT_WIDTH_OUT_OF_RANGE");
+        expect(e.code).toBe('BIT_WIDTH_OUT_OF_RANGE');
       }
     }
   });
 
-  it("rejects dim not multiple of 8", () => {
+  it('rejects dim not multiple of 8', () => {
     for (const d of [0, 1, 4, 7, 9]) {
       expect(() => new TurboQuantIndex(d, 4)).toThrow();
       try {
         new TurboQuantIndex(d, 4);
       } catch (e: any) {
-        expect(e.code).toBe("DIM_NOT_POSITIVE_MULTIPLE_OF_8");
+        expect(e.code).toBe('DIM_NOT_POSITIVE_MULTIPLE_OF_8');
       }
     }
   });
 
-  it("lazy constructor: dim=null", () => {
+  it('lazy constructor: dim=null', () => {
     const idx = new TurboQuantIndex();
     expect(idx.dim).toBeNull();
     expect(idx.length).toBe(0);
@@ -57,43 +57,43 @@ describe("TurboQuantIndex constructor", () => {
 
 // ── add ───────────────────────────────────────────────────────────────────
 
-describe("TurboQuantIndex.add", () => {
-  it("updates length", () => {
+describe('TurboQuantIndex.add', () => {
+  it('updates length', () => {
     const idx = new TurboQuantIndex(128, 4);
     idx.add(unitVectors(50, 128));
     expect(idx.length).toBe(50);
   });
 
-  it("is incremental", () => {
+  it('is incremental', () => {
     const idx = new TurboQuantIndex(128, 4);
     idx.add(unitVectors(20, 128, 1));
     idx.add(unitVectors(30, 128, 2));
     expect(idx.length).toBe(50);
   });
 
-  it("throws DIM_MISMATCH when explicit dim arg conflicts with index dim", () => {
+  it('throws DIM_MISMATCH when explicit dim arg conflicts with index dim', () => {
     const idx = new TurboQuantIndex(128, 4);
     // Pass dim=256 explicitly, conflicting with the committed dim=128.
     expect(() => idx.add(unitVectors(1, 256), 256)).toThrow();
     try {
       idx.add(unitVectors(1, 256), 256);
     } catch (e: any) {
-      expect(e.code).toBe("DIM_MISMATCH");
+      expect(e.code).toBe('DIM_MISMATCH');
     }
   });
 
-  it("throws VECTOR_BUFFER_NOT_MULTIPLE_OF_DIM for bad buffer", () => {
+  it('throws VECTOR_BUFFER_NOT_MULTIPLE_OF_DIM for bad buffer', () => {
     const idx = new TurboQuantIndex(128, 4);
     // Buffer of length 5 is not divisible by 128
     expect(() => idx.add(new Float32Array(5))).toThrow();
     try {
       idx.add(new Float32Array(5));
     } catch (e: any) {
-      expect(e.code).toBe("VECTOR_BUFFER_NOT_MULTIPLE_OF_DIM");
+      expect(e.code).toBe('VECTOR_BUFFER_NOT_MULTIPLE_OF_DIM');
     }
   });
 
-  it("throws INVALID_INPUT_VALUE for NaN", () => {
+  it('throws INVALID_INPUT_VALUE for NaN', () => {
     const idx = new TurboQuantIndex(64, 4);
     const data = unitVectors(1, 64).slice();
     data[5] = NaN;
@@ -101,11 +101,11 @@ describe("TurboQuantIndex.add", () => {
     try {
       idx.add(data);
     } catch (e: any) {
-      expect(e.code).toBe("INVALID_INPUT_VALUE");
+      expect(e.code).toBe('INVALID_INPUT_VALUE');
     }
   });
 
-  it("throws INVALID_INPUT_VALUE for huge magnitude", () => {
+  it('throws INVALID_INPUT_VALUE for huge magnitude', () => {
     const idx = new TurboQuantIndex(64, 4);
     const data = unitVectors(1, 64).slice();
     data[5] = 1e20;
@@ -113,42 +113,42 @@ describe("TurboQuantIndex.add", () => {
     try {
       idx.add(data);
     } catch (e: any) {
-      expect(e.code).toBe("INVALID_INPUT_VALUE");
+      expect(e.code).toBe('INVALID_INPUT_VALUE');
     }
   });
 
-  it("lazy index throws DIM_REQUIRED without dim arg", () => {
+  it('lazy index throws DIM_REQUIRED without dim arg', () => {
     const idx = new TurboQuantIndex();
     expect(() => idx.add(unitVectors(1, 128))).toThrow();
     try {
       idx.add(unitVectors(1, 128));
     } catch (e: any) {
-      expect(e.code).toBe("DIM_REQUIRED");
+      expect(e.code).toBe('DIM_REQUIRED');
     }
   });
 
-  it("lazy index commits dim when dim arg is supplied", () => {
+  it('lazy index commits dim when dim arg is supplied', () => {
     const idx = new TurboQuantIndex();
     idx.add(unitVectors(5, 128), 128);
     expect(idx.dim).toBe(128);
     expect(idx.length).toBe(5);
   });
 
-  it("throws DIM_NOT_MULTIPLE_OF_8 for non-multiple-of-8 dim on lazy", () => {
+  it('throws DIM_NOT_MULTIPLE_OF_8 for non-multiple-of-8 dim on lazy', () => {
     const idx = new TurboQuantIndex();
     expect(() => idx.add(new Float32Array(9), 9)).toThrow();
     try {
       idx.add(new Float32Array(9), 9);
     } catch (e: any) {
-      expect(e.code).toBe("DIM_NOT_MULTIPLE_OF_8");
+      expect(e.code).toBe('DIM_NOT_MULTIPLE_OF_8');
     }
   });
 });
 
 // ── search ────────────────────────────────────────────────────────────────
 
-describe("TurboQuantIndex.search", () => {
-  it("result shape nq × k", () => {
+describe('TurboQuantIndex.search', () => {
+  it('result shape nq × k', () => {
     const idx = new TurboQuantIndex(128, 4);
     idx.add(unitVectors(100, 128));
     const res = idx.search(unitVectors(5, 128, 99), 10);
@@ -158,7 +158,7 @@ describe("TurboQuantIndex.search", () => {
     expect(res.indices.length).toBe(50);
   });
 
-  it("single query", () => {
+  it('single query', () => {
     const idx = new TurboQuantIndex(128, 4);
     idx.add(unitVectors(100, 128));
     const res = idx.search(unitVectors(1, 128, 99), 5);
@@ -166,7 +166,7 @@ describe("TurboQuantIndex.search", () => {
     expect(res.k).toBe(5);
   });
 
-  it("self-query recall@1 ≥ 95%", () => {
+  it('self-query recall@1 ≥ 95%', () => {
     const dim = 256;
     const n = 100;
     const vecs = unitVectors(n, dim, 42);
@@ -182,7 +182,7 @@ describe("TurboQuantIndex.search", () => {
     expect(hits).toBeGreaterThanOrEqual(19); // ≥ 95 %
   });
 
-  it("batch vs individual query equivalence", () => {
+  it('batch vs individual query equivalence', () => {
     const idx = new TurboQuantIndex(256, 4);
     idx.add(unitVectors(50, 256, 0));
     const queries = unitVectors(5, 256, 99);
@@ -199,7 +199,7 @@ describe("TurboQuantIndex.search", () => {
     }
   });
 
-  it("empty eager index returns k=0", () => {
+  it('empty eager index returns k=0', () => {
     const idx = new TurboQuantIndex(128, 4);
     const res = idx.search(unitVectors(1, 128), 3);
     expect(res.k).toBe(0);
@@ -207,28 +207,28 @@ describe("TurboQuantIndex.search", () => {
     expect(res.indices.length).toBe(0);
   });
 
-  it("throws QUERY_DIM_MISMATCH for wrong dim queries", () => {
+  it('throws QUERY_DIM_MISMATCH for wrong dim queries', () => {
     const idx = new TurboQuantIndex(128, 4);
     idx.add(unitVectors(5, 128));
     expect(() => idx.search(unitVectors(1, 64), 1)).toThrow();
     try {
       idx.search(unitVectors(1, 64), 1);
     } catch (e: any) {
-      expect(e.code).toBe("QUERY_DIM_MISMATCH");
+      expect(e.code).toBe('QUERY_DIM_MISMATCH');
     }
   });
 
-  it("throws DIM_REQUIRED for non-empty search on lazy uninitialized index", () => {
+  it('throws DIM_REQUIRED for non-empty search on lazy uninitialized index', () => {
     const idx = new TurboQuantIndex();
     expect(() => idx.search(unitVectors(1, 128), 1)).toThrow();
     try {
       idx.search(unitVectors(1, 128), 1);
     } catch (e: any) {
-      expect(e.code).toBe("DIM_REQUIRED");
+      expect(e.code).toBe('DIM_REQUIRED');
     }
   });
 
-  it("empty queries returns nq=0 with correct effective_k", () => {
+  it('empty queries returns nq=0 with correct effective_k', () => {
     const idx = new TurboQuantIndex(64, 4);
     idx.add(unitVectors(3, 64));
     const res = idx.search(new Float32Array(0), 5);
@@ -239,8 +239,8 @@ describe("TurboQuantIndex.search", () => {
 
 // ── swapRemove ────────────────────────────────────────────────────────────
 
-describe("TurboQuantIndex.swapRemove", () => {
-  it("shrinks length, returns moved index", () => {
+describe('TurboQuantIndex.swapRemove', () => {
+  it('shrinks length, returns moved index', () => {
     const idx = new TurboQuantIndex(128, 4);
     idx.add(unitVectors(10, 128));
     const moved = idx.swapRemove(3);
@@ -248,14 +248,14 @@ describe("TurboQuantIndex.swapRemove", () => {
     expect(idx.length).toBe(9);
   });
 
-  it("last-element swap is a no-op", () => {
+  it('last-element swap is a no-op', () => {
     const idx = new TurboQuantIndex(128, 4);
     idx.add(unitVectors(5, 128));
     expect(idx.swapRemove(4)).toBe(4);
     expect(idx.length).toBe(4);
   });
 
-  it("post-remove search works (cache invalidation)", () => {
+  it('post-remove search works (cache invalidation)', () => {
     const dim = 256;
     const idx = new TurboQuantIndex(dim, 4);
     const vecs = unitVectors(20, dim, 0);
@@ -273,22 +273,22 @@ describe("TurboQuantIndex.swapRemove", () => {
     expect(Number(post.indices[0])).toBe(5);
   });
 
-  it("throws INDEX_OUT_OF_RANGE for out-of-bounds idx", () => {
+  it('throws INDEX_OUT_OF_RANGE for out-of-bounds idx', () => {
     const idx = new TurboQuantIndex(128, 4);
     idx.add(unitVectors(3, 128));
     expect(() => idx.swapRemove(99)).toThrow();
     try {
       idx.swapRemove(99);
     } catch (e: any) {
-      expect(e.code).toBe("INDEX_OUT_OF_RANGE");
+      expect(e.code).toBe('INDEX_OUT_OF_RANGE');
     }
   });
 });
 
 // ── prepare / write / load ────────────────────────────────────────────────
 
-describe("TurboQuantIndex.prepare + write + load", () => {
-  it("prepare is idempotent", () => {
+describe('TurboQuantIndex.prepare + write + load', () => {
+  it('prepare is idempotent', () => {
     const idx = new TurboQuantIndex(64, 4);
     idx.add(unitVectors(20, 64));
     idx.prepare();
@@ -296,7 +296,7 @@ describe("TurboQuantIndex.prepare + write + load", () => {
     expect(idx.length).toBe(20);
   });
 
-  it("write/load round-trip", () => {
+  it('write/load round-trip', () => {
     const dim = 128;
     const vecs = unitVectors(80, dim, 7);
     const idx = new TurboQuantIndex(dim, 4);
@@ -325,60 +325,60 @@ describe("TurboQuantIndex.prepare + write + load", () => {
     }
   });
 
-  it("load nonexistent file throws IO_ERROR", () => {
-    expect(() => TurboQuantIndex.load("/nonexistent/path/does-not-exist.tv")).toThrow();
+  it('load nonexistent file throws IO_ERROR', () => {
+    expect(() => TurboQuantIndex.load('/nonexistent/path/does-not-exist.tv')).toThrow();
     try {
-      TurboQuantIndex.load("/nonexistent/path/does-not-exist.tv");
+      TurboQuantIndex.load('/nonexistent/path/does-not-exist.tv');
     } catch (e: any) {
-      expect(e.code).toBe("IO_ERROR");
+      expect(e.code).toBe('IO_ERROR');
     }
   });
 });
 
 // ── query finiteness pre-validation (regression for SIGABRT bug) ──────────
 
-describe("TurboQuantIndex.search invalid query values", () => {
+describe('TurboQuantIndex.search invalid query values', () => {
   function makeIndex(dim: number): TurboQuantIndex {
     const idx = new TurboQuantIndex(dim, 4);
     idx.add(unitVectors(8, dim, 1));
     return idx;
   }
 
-  it("NaN query throws INVALID_INPUT_VALUE — process survives", () => {
+  it('NaN query throws INVALID_INPUT_VALUE — process survives', () => {
     const idx = makeIndex(8);
     const q = new Float32Array([NaN, 1, 1, 1, 1, 1, 1, 1]);
     expect(() => idx.search(q, 1)).toThrow();
     try {
       idx.search(q, 1);
     } catch (e: any) {
-      expect(e.code).toBe("INVALID_INPUT_VALUE");
+      expect(e.code).toBe('INVALID_INPUT_VALUE');
     }
     // Process did not abort — reaching here proves survival.
   });
 
-  it("Infinity query throws INVALID_INPUT_VALUE — process survives", () => {
+  it('Infinity query throws INVALID_INPUT_VALUE — process survives', () => {
     const idx = makeIndex(8);
     const q = new Float32Array([Infinity, 1, 1, 1, 1, 1, 1, 1]);
     expect(() => idx.search(q, 1)).toThrow();
     try {
       idx.search(q, 1);
     } catch (e: any) {
-      expect(e.code).toBe("INVALID_INPUT_VALUE");
+      expect(e.code).toBe('INVALID_INPUT_VALUE');
     }
   });
 
-  it("1e20 query throws INVALID_INPUT_VALUE — process survives", () => {
+  it('1e20 query throws INVALID_INPUT_VALUE — process survives', () => {
     const idx = makeIndex(8);
     const q = new Float32Array([1e20, 1, 1, 1, 1, 1, 1, 1]);
     expect(() => idx.search(q, 1)).toThrow();
     try {
       idx.search(q, 1);
     } catch (e: any) {
-      expect(e.code).toBe("INVALID_INPUT_VALUE");
+      expect(e.code).toBe('INVALID_INPUT_VALUE');
     }
   });
 
-  it("masked search: NaN query throws INVALID_INPUT_VALUE", () => {
+  it('masked search: NaN query throws INVALID_INPUT_VALUE', () => {
     const idx = makeIndex(8);
     const q = new Float32Array([NaN, 1, 1, 1, 1, 1, 1, 1]);
     const mask = new Array(8).fill(true);
@@ -386,7 +386,7 @@ describe("TurboQuantIndex.search invalid query values", () => {
     try {
       idx.search(q, 1, { mask });
     } catch (e: any) {
-      expect(e.code).toBe("INVALID_INPUT_VALUE");
+      expect(e.code).toBe('INVALID_INPUT_VALUE');
     }
   });
 });

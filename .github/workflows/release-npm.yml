@@ -333,6 +333,19 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      # Build the TS integration outputs (dist/langchain.{js,cjs,d.ts,d.mts})
+      # before publishing the root package. The root package's
+      # exports["./langchain"] subpath points at dist/, which is gitignored and
+      # never produced by the per-platform .node builds — without this step the
+      # published tarball would ship a dead subpath (ERR_MODULE_NOT_FOUND on
+      # `import "turbovec/langchain"`). The package's `prepack` hook also runs
+      # build:ts on `npm publish`, but we build explicitly here so a failure is
+      # surfaced as its own step.
+      - name: Build TS integrations (dist/)
+        if: steps.check.outputs.publish == 'true'
+        working-directory: turbovec-node
+        run: npm run build:ts
+
       - name: npm publish root package
         if: steps.check.outputs.publish == 'true'
         working-directory: turbovec-node
