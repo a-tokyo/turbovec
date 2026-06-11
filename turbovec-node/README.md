@@ -1,6 +1,17 @@
-# turbovec
+<p align="center">
+  <img src="https://raw.githubusercontent.com/a-tokyo/turbovec/main/docs/header.png" alt="turbovec — Google's TurboQuant for vector search" width="100%">
+</p>
 
-Fast vector quantization with 2–4 bit compression and SIMD search — a native Node.js addon.
+<p align="center">
+  <a href="https://github.com/a-tokyo/turbovec/blob/main/turbovec-node/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License"></a>
+  <a href="https://www.npmjs.com/package/turbovec"><img src="https://img.shields.io/npm/v/turbovec?label=npm&color=blue" alt="npm version"></a>
+  <a href="https://www.npmjs.com/package/turbovec"><img src="https://img.shields.io/npm/dt/turbovec?color=blue" alt="npm downloads"></a>
+  <a href="https://arxiv.org/abs/2504.19874"><img src="https://img.shields.io/badge/paper-arXiv-b31b1b.svg" alt="TurboQuant paper"></a>
+</p>
+
+---
+
+**Fast vector quantization with 2–4 bit compression and SIMD search — a native Node.js addon.**
 
 turbovec is a Rust vector index built on Google Research's [**TurboQuant**](https://arxiv.org/abs/2504.19874) algorithm — a data-oblivious quantizer that matches the Shannon lower bound on distortion, with no codebook training and no separate train phase. This package exposes it to Node.js as a [napi-rs](https://napi.rs/) native addon, with prebuilt binaries for common platforms.
 
