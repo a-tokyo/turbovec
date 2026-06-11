@@ -2,20 +2,46 @@
   "name": "turbovec",
   "version": "0.1.0",
   "description": "Fast vector quantization with 2-4 bit compression and SIMD search — Node.js native addon",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RyanCodrai/turbovec"
+  },
   "main": "index.js",
   "types": "index.d.ts",
+  "engines": {
+    "node": ">= 20"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "README.md"
+  ],
   "napi": {
-    "binaryName": "turbovec"
+    "binaryName": "turbovec",
+    "targets": [
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+      "aarch64-apple-darwin",
+      "x86_64-pc-windows-msvc"
+    ]
   },
   "scripts": {
     "build": "napi build --platform --release",
     "pretest": "npm run build",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepublishOnly": "napi prepublish -t npm"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3",
     "@types/node": "^22.19.21",
     "typescript": "^5",
     "vitest": "^2"
+  },
+  "optionalDependencies": {
+    "turbovec-linux-x64-gnu": "0.1.0",
+    "turbovec-linux-arm64-gnu": "0.1.0",
+    "turbovec-darwin-arm64": "0.1.0",
+    "turbovec-win32-x64-msvc": "0.1.0"
   }
 }

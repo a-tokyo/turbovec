@@ -1,0 +1,23 @@
+{
+  "name": "turbovec-darwin-arm64",
+  "version": "0.1.0",
+  "cpu": [
+    "arm64"
+  ],
+  "main": "turbovec.darwin-arm64.node",
+  "files": [
+    "turbovec.darwin-arm64.node"
+  ],
+  "description": "Fast vector quantization with 2-4 bit compression and SIMD search — Node.js native addon",
+  "license": "MIT",
+  "engines": {
+    "node": ">= 20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RyanCodrai/turbovec"
+  },
+  "os": [
+    "darwin"
+  ]
+}
