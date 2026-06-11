@@ -24,6 +24,16 @@
         "default": "./dist/langchain.cjs"
       }
     },
+    "./llamaindex": {
+      "import": {
+        "types": "./dist/llamaindex.d.mts",
+        "default": "./dist/llamaindex.js"
+      },
+      "require": {
+        "types": "./dist/llamaindex.d.ts",
+        "default": "./dist/llamaindex.cjs"
+      }
+    },
     "./package.json": "./package.json"
   },
   "engines": {
@@ -59,6 +69,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@langchain/core": "^1.1.48",
+    "@llamaindex/core": "^0.6.23",
     "@napi-rs/cli": "^3",
     "@types/node": "^22.19.21",
     "eslint": "^10.4.1",
@@ -70,17 +81,21 @@
     "vitest": "^2"
   },
   "peerDependencies": {
-    "@langchain/core": ">=0.3.11 <2"
+    "@langchain/core": ">=0.3.11 <2",
+    "@llamaindex/core": ">=0.6.23 <1"
   },
   "peerDependenciesMeta": {
     "@langchain/core": {
       "optional": true
+    },
+    "@llamaindex/core": {
+      "optional": true
     }
   },
   "optionalDependencies": {
-    "turbovec-linux-x64-gnu": "0.0.0",
-    "turbovec-linux-arm64-gnu": "0.0.0",
     "turbovec-darwin-arm64": "0.0.0",
+    "turbovec-linux-arm64-gnu": "0.0.0",
+    "turbovec-linux-x64-gnu": "0.0.0",
     "turbovec-win32-x64-msvc": "0.0.0"
   }
 }

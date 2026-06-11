@@ -7,7 +7,7 @@ import { defineConfig } from 'tsup';
 export default defineConfig({
   entry: {
     langchain: 'ts/langchain.ts',
-    // llamaindex: "ts/llamaindex.ts", // slice 5
+    llamaindex: 'ts/llamaindex.ts',
   },
   format: ['esm', 'cjs'],
   dts: true,
@@ -16,9 +16,10 @@ export default defineConfig({
   // napi artifacts (index.js / index.d.ts).
   clean: false,
   target: 'node20',
-  // `@langchain/core` is an optional peer dep and the local native addon is
-  // resolved at runtime; never bundle either into the published output.
-  external: ['@langchain/core', '../index.js'],
+  // `@langchain/core` and `@llamaindex/core` are optional peer deps and the
+  // local native addon is resolved at runtime; never bundle them into the
+  // published output.
+  external: [/^@langchain\/core/, /^@llamaindex\/core/, '../index.js'],
   outExtension({ format }) {
     return { js: format === 'cjs' ? '.cjs' : '.js' };
   },
