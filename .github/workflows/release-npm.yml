@@ -14,10 +14,25 @@
 #   1. Four parallel build jobs (native runners) compile a .node per platform.
 #      Linux targets set TURBOVEC_STATIC_BLAS=1 so the .node bundles OpenBLAS
 #      statically — no libopenblas.so required on end-user Linux boxes.
-#   2. A single `release` job (main-ref-gated) downloads all artifacts,
-#      then npm publish triggers the prepublishOnly hook (napi prepublish -t npm)
-#      exactly once to populate the npm/ platform-package directories, creates a
-#      GitHub release, and publishes the platform packages + root to npm.
+#   2. A single `release` job (main-ref-gated) runs the canonical napi-rs v3
+#      publish flow:
+#        a. download all per-platform .node artifacts into turbovec-node/artifacts/
+#           (the default --output-dir that `napi artifacts`/`napi prepublish`
+#           scan for .node files — they do NOT read the package root).
+#        b. `napi artifacts` copies each .node from artifacts/ into its
+#           npm/<target>/ dir (and to the package root).
+#        c. ncipollo creates the GitHub release with a `js-v${version}` tag
+#           (surface-prefixed, cf. py-v*) — it never matches the crates.io
+#           `v*` trigger glob.
+#        d. a single root `npm publish` does everything else (official napi-rs
+#           template pattern): `prepack` builds dist/, then the `prepublishOnly`
+#           hook (`napi prepublish -t npm`) stamps all platform-package versions
+#           + the root optionalDependencies and publishes the four platform
+#           packages, then npm publishes the root. This is the ONLY publish call
+#           — there is NO manual `npm publish npm/*/` loop, hence no
+#           double-publish. GITHUB_TOKEN is intentionally absent from that step
+#           so prepublish's default gh-release is a no-op (otherwise it would
+#           push a colliding `v${version}` tag and trip release-crates.yml).
 #
 # Auth: NODE_AUTH_TOKEN (NPM_TOKEN secret). OIDC trusted publishing is the
 # eventual upgrade — id-token permission is already reserved here.
@@ -290,14 +305,15 @@ jobs:
             echo "Will publish: $NAME@$VER"
           fi
 
-      # Download all per-platform .node artifacts into the turbovec-node directory.
-      # napi prepublish (run via the prepublishOnly hook) expects them alongside
-      # the root package.
+      # Download all per-platform .node artifacts into turbovec-node/artifacts/.
+      # `napi artifacts` and `napi prepublish` scan their --output-dir (default
+      # ./artifacts) recursively for .node files — they do NOT read the package
+      # root — so the artifacts MUST land under artifacts/, not turbovec-node/.
       - name: Download all .node artifacts
         if: steps.check.outputs.publish == 'true'
         uses: actions/download-artifact@v4
         with:
-          path: turbovec-node
+          path: turbovec-node/artifacts
           merge-multiple: true
 
       # Fail fast if any platform artifact is missing before we attempt publish.
@@ -306,47 +322,49 @@ jobs:
         working-directory: turbovec-node
         shell: bash
         run: |
-          COUNT=$(find . -maxdepth 1 -name '*.node' | wc -l)
+          COUNT=$(find artifacts -name '*.node' | wc -l)
           test "$COUNT" -eq 4 || { echo "::error::expected 4 .node artifacts, found $COUNT"; exit 1; }
           echo "Found $COUNT .node artifacts — proceeding"
 
+      # Copy each .node from artifacts/ into its npm/<target>/ dir (and to the
+      # package root). napi prepublish only publishes a platform package if its
+      # .node already exists in npm/<target>/ — this step is what puts it there.
+      - name: Copy .node into platform packages (napi artifacts)
+        if: steps.check.outputs.publish == 'true'
+        working-directory: turbovec-node
+        run: npx napi artifacts
+
+      # Create the GitHub release BEFORE the npm publish below. js-v* prefix
+      # (cf. py-v*) — deliberately does NOT match the crates.io release trigger
+      # glob `v*` in release-crates.yml, so cutting an npm release never fires a
+      # crates.io publish.
       - name: GitHub Release
         if: steps.check.outputs.publish == 'true'
         uses: ncipollo/release-action@v1
         with:
-          tag: v${{ steps.check.outputs.version }}
-          name: v${{ steps.check.outputs.version }}
+          tag: js-v${{ steps.check.outputs.version }}
+          name: js-v${{ steps.check.outputs.version }}
           generateReleaseNotes: true
 
-      - name: npm publish platform packages
-        # prepublishOnly hook (napi prepublish -t npm) runs automatically here
-        # via npm publish — do NOT run napi prepublish as a separate step to
-        # avoid double-invocation.
-        if: steps.check.outputs.publish == 'true'
-        working-directory: turbovec-node
-        shell: bash
-        run: |
-          for pkg_dir in npm/*/; do
-            echo "Publishing $pkg_dir"
-            npm publish "$pkg_dir" --access public
-          done
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      # Build the TS integration outputs (dist/langchain.{js,cjs,d.ts,d.mts})
-      # before publishing the root package. The root package's
-      # exports["./langchain"] subpath points at dist/, which is gitignored and
-      # never produced by the per-platform .node builds — without this step the
-      # published tarball would ship a dead subpath (ERR_MODULE_NOT_FOUND on
-      # `import "turbovec/langchain"`). The package's `prepack` hook also runs
-      # build:ts on `npm publish`, but we build explicitly here so a failure is
-      # surfaced as its own step.
-      - name: Build TS integrations (dist/)
-        if: steps.check.outputs.publish == 'true'
-        working-directory: turbovec-node
-        run: npm run build:ts
-
-      - name: npm publish root package
+      # Single npm publish, official napi-rs template pattern. On the root
+      # `npm publish` npm runs, in order:
+      #   1. `prepack` → `build:ts` builds dist/ (the
+      #      exports["./langchain"]/["./llamaindex"] subpaths point at dist/,
+      #      which is gitignored and never produced by the per-platform .node
+      #      builds — without it the tarball ships a dead subpath).
+      #   2. `prepublishOnly` → `napi prepublish -t npm` stamps every platform
+      #      package.json version + the root optionalDependencies to the root
+      #      version, then `npm publish`-es the four npm/<target>/ platform
+      #      packages (whose .node files were copied in by `napi artifacts`
+      #      above).
+      #   3. npm publishes the root package.
+      # This is the ONLY place platform + root packages are published — there is
+      # no separate manual platform-publish loop, hence no double-publish.
+      # GITHUB_TOKEN is deliberately NOT in env: prepublish's gh-release
+      # (default on) would otherwise push a `v${version}` tag that collides with
+      # the ncipollo release above and trips the crates.io `v*` trigger; with no
+      # token it is a no-op and ncipollo (js-v*) is the sole release.
+      - name: npm publish (platform packages + root)
         if: steps.check.outputs.publish == 'true'
         working-directory: turbovec-node
         run: npm publish --access public

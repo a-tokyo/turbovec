@@ -136,11 +136,16 @@ jobs:
         if: runner.os != 'Linux'
         run: npx napi build --platform --release
 
-      # Lint/format steps will be added in the integration slice (slice 4)
-      # once eslint/prettier configs land in turbovec-node/.
+      # Lint + format gate. Run once (ubuntu-latest only) — eslint/prettier
+      # results are OS-independent, so running on every matrix OS is redundant.
+      - name: Lint + format check (Linux)
+        if: runner.os == 'Linux' && matrix.os == 'ubuntu-latest'
+        run: |
+          npm run lint
+          npm run format:check
 
       - name: TypeScript type-check
-        run: npx tsc --noEmit
+        run: npm run typecheck
 
       # On Linux: assert the .node has NO dynamic math library dependencies.
       # A dynamic dep means static linking silently fell back, which would
@@ -161,7 +166,10 @@ jobs:
       # Guard against the dead-subpath defect: the published root package's
       # exports["./langchain"] points at dist/, which is gitignored and only
       # produced by `build:ts`. Build dist/ and assert `npm pack` actually ships
-      # dist/langchain.{js,cjs,d.ts}. One OS is enough — keep it on Linux.
+      # the dual ESM/CJS outputs. tsup emits ESM as .mjs (and types .d.mts) and
+      # CJS as .cjs (types .d.ts) — so ESM consumers avoid the
+      # MODULE_TYPELESS_PACKAGE_JSON warning (the package has no "type":"module").
+      # One OS is enough — keep it on Linux.
       - name: Assert integration subpaths ship in the tarball (Linux)
         if: runner.os == 'Linux' && matrix.os == 'ubuntu-latest'
         shell: bash
@@ -177,8 +185,43 @@ jobs:
           ")
           echo "$FILES"
           for f in \
-            dist/langchain.js dist/langchain.cjs dist/langchain.d.ts \
-            dist/llamaindex.js dist/llamaindex.cjs dist/llamaindex.d.ts; do
+            dist/langchain.mjs dist/langchain.cjs dist/langchain.d.ts \
+            dist/llamaindex.mjs dist/llamaindex.cjs dist/llamaindex.d.ts; do
             echo "$FILES" | grep -qx "$f" || { echo "::error::missing $f in npm pack tarball"; exit 1; }
           done
-          echo "ok: dist/{langchain,llamaindex}.{js,cjs,d.ts} present in tarball"
+          echo "ok: dist/{langchain,llamaindex}.{mjs,cjs,d.ts} present in tarball"
+
+      # Exercise the PUBLISHED package shape end-to-end — the blind spot that let
+      # the binary-less platform-package bug ship. pack the root, install the
+      # tarball into a clean dir (WITHOUT the unpublished platform
+      # optionalDependency), drop the locally-built .node into the installed
+      # package (mirroring what the platform optionalDependency would provide),
+      # install the optional peers (so the integration modules' eager
+      # @langchain/core + @llamaindex/core imports resolve), then require/import
+      # every exports subpath. Fails on any dead subpath (MODULE_NOT_FOUND) or
+      # the ESM MODULE_TYPELESS_PACKAGE_JSON warning.
+      - name: Smoke-test published package shape (Linux)
+        if: runner.os == 'Linux' && matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf dist
+          npm run build:ts
+          # --ignore-scripts: dist/ already built; skip prepack so its build:ts
+          # stdout can't corrupt the --json tarball-name parse.
+          TARBALL=$(npm pack --pack-destination /tmp/tvpack --ignore-scripts --json \
+            | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(0,'utf8'))[0].filename)")
+          CONSUMER=/tmp/tvpack/consumer
+          mkdir -p "$CONSUMER"
+          ( cd "$CONSUMER" && npm init -y >/dev/null \
+            && npm install "/tmp/tvpack/$TARBALL" @langchain/core @llamaindex/core >/dev/null )
+          # Make the native binding resolvable (no published platform dep yet).
+          cp ./*.node "$CONSUMER/node_modules/turbovec/"
+          ( cd "$CONSUMER" && node -e "require('turbovec'); require('turbovec/langchain'); require('turbovec/llamaindex'); console.log('CJS subpaths resolve')" )
+          # ESM: capture stderr too and fail on the typeless-package warning.
+          ESM_OUT=$( cd "$CONSUMER" && node --input-type=module \
+            -e "await import('turbovec/langchain'); await import('turbovec/llamaindex'); console.log('ESM subpaths resolve')" 2>&1 )
+          echo "$ESM_OUT"
+          echo "$ESM_OUT" | grep -q 'ESM subpaths resolve' || { echo "::error::ESM subpath failed to resolve"; exit 1; }
+          echo "$ESM_OUT" | grep -qi 'MODULE_TYPELESS_PACKAGE_JSON' && { echo "::error::ESM emitted MODULE_TYPELESS_PACKAGE_JSON warning"; exit 1; } || true
+          rm -rf /tmp/tvpack
