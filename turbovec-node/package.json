@@ -83,7 +83,7 @@
     "test:coverage": "vitest run --coverage",
     "prepack": "npm run build:ts",
     "prepublishOnly": "napi prepublish -t npm",
-    "prepare": "cd .. && node turbovec-node/node_modules/.bin/husky turbovec-node/.husky"
+    "prepare": "cd .. && husky turbovec-node/.husky"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
