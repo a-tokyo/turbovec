@@ -68,6 +68,43 @@ npx eslint .           # lint
 npx prettier --check . # format check (use `npx prettier --write .` to fix)
 ```
 
+Run the test suite with coverage (thresholds enforced):
+
+```bash
+npm run test:coverage
+```
+
+Coverage is instrumented with `@vitest/coverage-v8` scoped to `ts/**` only
+(the napi-generated loader and `dist/` are excluded). Enforced thresholds:
+
+| Metric     | Threshold | Measured baseline |
+|------------|-----------|-------------------|
+| Statements | 90%       | 94.43%            |
+| Branches   | 80%       | 86.61%            |
+| Functions  | 90%       | 95.23%            |
+| Lines      | 90%       | 94.43%            |
+
+Raise the thresholds in `vitest.config.ts` when coverage genuinely improves.
+
+### Pre-commit hook
+
+`npm install` inside `turbovec-node/` wires a [husky v9](https://typicode.github.io/husky/)
+pre-commit hook automatically via the `prepare` script. The hook runs:
+
+```
+format:check → lint → typecheck
+```
+
+Tests are intentionally excluded — they require the native addon to be built
+and are covered in CI.
+
+The hook **only fires when staged files include paths under `turbovec-node/`**.
+Commits that touch only Rust sources, Python, or docs skip the Node.js checks
+entirely (the hook exits 0 immediately).
+
+To re-wire the hook after a fresh clone, run `npm install` inside
+`turbovec-node/` — no manual `husky` command is needed.
+
 The `@langchain/core` and `@llamaindex/core` integration peers are installed
 as dev dependencies, so their test suites run out of the box after
 `npm install` — no extras step needed. They are *optional* peer dependencies

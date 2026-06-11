@@ -2,6 +2,8 @@
 target/
 node_modules/
 dist/
+# vitest --coverage output
+coverage/
 .gates.md
 *.tgz
 # Platform package binaries that land here during CI pre-publish steps

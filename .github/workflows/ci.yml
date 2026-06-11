@@ -163,6 +163,13 @@ jobs:
       - name: Run vitest
         run: npx vitest run
 
+      # Coverage with enforced thresholds. Run once on ubuntu-latest only —
+      # results are OS-independent. @vitest/coverage-v8 is a devDependency
+      # already installed by `npm ci` above. Threshold failure fails the job.
+      - name: Coverage with thresholds (Linux)
+        if: runner.os == 'Linux' && matrix.os == 'ubuntu-latest'
+        run: npm run test:coverage
+
       # Guard against the dead-subpath defect: the published root package's
       # exports["./langchain"] points at dist/, which is gitignored and only
       # produced by `build:ts`. Build dist/ and assert `npm pack` actually ships

@@ -9,6 +9,7 @@ export default tseslint.config(
     // output, vendored binaries, configs — is out of scope.
     ignores: [
       'dist',
+      'coverage',
       'node_modules',
       'npm',
       'target',
