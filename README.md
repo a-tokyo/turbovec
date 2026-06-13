@@ -126,7 +126,7 @@ let loaded = IdMapIndex::load("index.tvim").unwrap();
 npm install turbovec
 ```
 
-Native addon (via [napi-rs](https://napi.rs/)) with prebuilt binaries for linux x64/arm64 (gnu), macOS arm64, and Windows x64. Vectors are flat row-major `Float32Array`s; ids are `bigint` (`BigUint64Array`).
+Native addon (via [napi-rs](https://napi.rs/)) with prebuilt binaries for linux x64/arm64 (gnu), macOS arm64 + x64 (Intel), and Windows x64. Vectors are flat row-major `Float32Array`s; ids are `bigint` (`BigUint64Array`).
 
 ```js
 const { TurboQuantIndex } = require('turbovec');
