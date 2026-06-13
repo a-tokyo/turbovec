@@ -23,13 +23,20 @@ use std::fmt;
 // Eq dropped from the derive because `InvalidInputValue` carries an f32,
 // which is not `Eq` (NaN != NaN). PartialEq still works for the
 // finite-input cases tests assert against.
+// `#[non_exhaustive]` so adding error variants in future releases is not a
+// breaking change — downstream `match` on this enum must carry a wildcard arm.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum AddError {
     /// Batch dim does not match the index's already-locked dim.
     DimMismatch { existing: usize, got: usize },
 
     /// First-add dim on a lazy index must be a multiple of 8.
     DimNotMultipleOf8(usize),
+
+    /// First-add dim on a lazy index exceeds [`MAX_DIM`](crate::MAX_DIM).
+    /// Bounds the lazily-built `dim`×`dim` rotation matrix allocation.
+    DimTooLarge { dim: usize, max: usize },
 
     /// `vectors.len()` is not a whole multiple of `dim`.
     VectorBufferNotMultipleOfDim { vectors_len: usize, dim: usize },
@@ -64,6 +71,9 @@ impl fmt::Display for AddError {
             Self::DimNotMultipleOf8(dim) => {
                 write!(f, "dim must be a multiple of 8, got {dim}")
             }
+            Self::DimTooLarge { dim, max } => {
+                write!(f, "dim {dim} exceeds maximum {max}")
+            }
             Self::VectorBufferNotMultipleOfDim { vectors_len, dim } => write!(
                 f,
                 "vector buffer length {vectors_len} not a multiple of dim {dim}",
@@ -89,13 +99,20 @@ impl fmt::Display for AddError {
 
 impl Error for AddError {}
 
+// `#[non_exhaustive]` so adding error variants in future releases is not a
+// breaking change — downstream `match` on this enum must carry a wildcard arm.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ConstructError {
     /// `bit_width` must be 2, 3, or 4.
     BitWidthOutOfRange(usize),
 
     /// `dim` must be a positive multiple of 8.
     DimNotPositiveMultipleOf8(usize),
+
+    /// `dim` exceeds [`MAX_DIM`](crate::MAX_DIM). Bounds the lazily-built
+    /// `dim`×`dim` rotation matrix allocation.
+    DimTooLarge { dim: usize, max: usize },
 }
 
 impl fmt::Display for ConstructError {
@@ -106,6 +123,9 @@ impl fmt::Display for ConstructError {
             }
             Self::DimNotPositiveMultipleOf8(dim) => {
                 write!(f, "dim must be a positive multiple of 8, got {dim}")
+            }
+            Self::DimTooLarge { dim, max } => {
+                write!(f, "dim {dim} exceeds maximum {max}")
             }
         }
     }

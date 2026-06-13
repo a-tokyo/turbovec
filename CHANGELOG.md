@@ -55,10 +55,103 @@ it touches.
 
 - **Multi-platform prebuilt binaries** selected automatically via
   `optionalDependencies`: linux x64 (gnu), linux arm64 (gnu), macOS arm64,
-  and Windows x64. The Linux binaries statically link BLAS, so they are
+  macOS x64 (Intel), and Windows x64. The Linux binaries statically link BLAS, so they are
   self-contained and require no system libraries at runtime. x64 binaries
   target the `x86-64-v3` baseline (AVX2, Haswell 2013+), matching the crate
   and Python wheels; the AVX-512 kernel is gated at runtime.
+
+## turbovec 0.8.0 (Python package) + turbovec 0.9.0 (Rust crate) — 2026-06-10
+
+Security-audit release. Two adversarial audit passes over the core crate,
+the Python binding, and the framework integrations, hardening the
+untrusted-file load path and the Python API surface and fixing several
+data-integrity bugs in the integration wrappers. Resolves #104, #105, and
+#106. No on-disk format change (still `.tv` / `.tvim` v3).
+
+A few fixes change observable behavior — see **Changed** under each surface.
+They turn previously-undefined or silently-wrong situations into clean,
+typed errors, so the bump is minor rather than patch.
+
+### turbovec — Rust crate (current: 0.8.1 → next: 0.9.0)
+
+#### Fixed
+
+- **Untrusted index files are validated before allocation on load.** A
+  crafted `.tv` / `.tvim` could previously trigger an integer-overflow in
+  the packed-size computation, drive a multi-gigabyte allocation from a
+  tiny file, divide-by-zero in the repack step, or load a structurally
+  invalid index that returned silently-wrong scores (a `bit_width` of 5–8
+  passed the old length check). The loader now range-checks `bit_width` and
+  `dim`, computes every size with checked arithmetic, and reads each payload
+  through a length-capped reader. (#105)
+- **x86 scalar fallback returned wrong results.** On pre-AVX2 x86 (or VMs
+  without AVX2), `score_query_into_heap` read the perm0-interleaved code
+  layout as if sequential, producing an incorrect top-k. It now
+  de-interleaves correctly; verified end-to-end against the SIMD kernels on
+  AVX-512 hardware. (#106)
+
+#### Changed
+
+- **`AddError` and `ConstructError` are now `#[non_exhaustive]`.** Downstream
+  `match` on these enums must carry a wildcard arm; in exchange, future error
+  variants are no longer breaking changes. (The new `DimTooLarge` variant is
+  why this release is the moment to make the switch.)
+- **`dim` is capped at `MAX_DIM` (65536)** at construction, first add, and
+  load. `search` lazily builds a `dim`×`dim` rotation matrix whose size is
+  not bounded by any file, so an unbounded `dim` was a load-time
+  resource-exhaustion vector. Larger dims now return a typed error.
+- **A zero-`dim` lazy add is rejected** with `AddError` instead of panicking
+  with a divide-by-zero and wedging the index.
+
+#### Removed
+
+- Dead, untested `pack::repack_3bit` (no callers; 3-bit goes through
+  `repack`).
+
+#### Other
+
+- The crate now fails to compile on non-64-bit targets (a `compile_error!`
+  gated on `target_pointer_width`). The size/offset arithmetic in
+  `encode`/`pack`/`search` assumes 64-bit `usize`; refusing to build on
+  32-bit/wasm avoids shipping a silently-unsafe (potential out-of-bounds)
+  build there.
+
+### turbovec — Python package (current: 0.7.1 → next: 0.8.0)
+
+#### Fixed
+
+- **`search()` no longer panics on NaN / Inf / oversized query
+  coordinates.** These previously raised an uncatchable `PanicException`
+  (a `BaseException`); they now raise `ValueError`, matching `add`. (#105)
+- **Loading a malformed `.tv` / `.tvim` raises a clean error** instead of
+  panicking or driving a huge allocation (the Rust load-path hardening
+  above, surfaced through the binding).
+- **agno: duplicate derived `doc_id` no longer orphans vectors.** Two
+  documents that derive the same id (a repeated `doc.id`, or identical
+  content) are both kept and both deletable, matching agno's reference
+  store (LanceDb appends). Previously the earlier vector was counted and
+  searchable but unreachable by id, and leaked on every upsert. (#104)
+- **agno: `delete_by_name` / `delete_by_content_id` / `delete_by_metadata`
+  no longer over-delete.** When distinct documents collided on a
+  content-derived `doc_id`, deleting by one attribute also deleted the
+  id-twin; deletion now targets only the documents matching the predicate.
+- **LangChain / Haystack / LlamaIndex: a persisted JSON side-car that is out
+  of sync with its `.tvim` index now raises a `ValueError` at load** instead
+  of an opaque `KeyError` deep inside a later query.
+- **Internal binding result-shape errors map to `RuntimeError`** rather than
+  an uncatchable panic.
+
+#### Changed
+
+- `search()` and the index constructors now raise `ValueError` for
+  non-finite query values and for `dim` outside the supported range, where
+  some of these inputs previously panicked or were silently accepted.
+
+### Docs
+
+- Corrected stale benchmark figures in the README (recall deltas, ARM/x86
+  speed ranges) to match the current `benchmarks/results/`; several had
+  drifted from before the TQ+ calibration step landed.
 
 ## turbovec 0.7.1 (Python package) + turbovec 0.8.1 (Rust crate) — 2026-06-09
 

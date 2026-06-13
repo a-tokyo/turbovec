@@ -34,6 +34,15 @@
 //! `OnceLock`. This keeps the invariant that once a cache is populated
 //! from `&self`, it matches the current `packed_codes`.
 
+// turbovec is 64-bit by design: the SIMD kernels, the `usize` size/offset
+// arithmetic in `encode`/`pack`/`search`, and all benchmarks assume a 64-bit
+// pointer width. On a 32-bit (or 16-bit) target those size computations could
+// overflow `usize` and index out of bounds. Refuse to compile there rather
+// than ship a silently-unsafe build — supporting 32-bit/wasm would require a
+// dedicated checked-arithmetic pass first.
+#[cfg(not(target_pointer_width = "64"))]
+compile_error!("turbovec requires a 64-bit target (target_pointer_width = \"64\")");
+
 pub mod codebook;
 pub mod encode;
 pub mod error;
@@ -45,13 +54,22 @@ pub mod search;
 
 pub use error::{AddError, ConstructError};
 pub use id_map::IdMapIndex;
-pub use io::MAX_DIM;
 
 use std::path::Path;
 use std::sync::OnceLock;
 
 const ROTATION_SEED: u64 = 42;
 const BLOCK: usize = 32;
+
+/// Upper bound on vector dimensionality. `search`/`prepare` lazily build a
+/// `dim`×`dim` f64 rotation matrix, an allocation that scales with `dim²`
+/// and is NOT bounded by the size of any loaded file — so an untrusted
+/// `.tv`/`.tvim` declaring a huge `dim` could otherwise drive a
+/// multi-gigabyte allocation (resource-exhaustion DoS) from a tiny file.
+/// 65536 is far above any real embedding dimension (largest in common use
+/// is ~4096) and rejects the catastrophic cases. Enforced at construction,
+/// first add, and load.
+pub const MAX_DIM: usize = 65536;
 const FLUSH_EVERY: usize = 256;
 
 /// Maximum permitted coordinate magnitude. Beyond this, f32 sum-of-
@@ -77,7 +95,7 @@ pub const MAX_INPUT_MAGNITUDE: f32 = 1e16;
 ///   - Huge magnitude: `simd_norm`'s f32 sum-of-squares overflows to
 ///     +Inf, `scale[i] = Inf` gets stored, slot incorrectly wins
 ///     top-k against every query.
-fn first_invalid_coord(values: &[f32], dim: usize) -> Option<(usize, usize, f32)> {
+pub fn first_invalid_coord(values: &[f32], dim: usize) -> Option<(usize, usize, f32)> {
     for (i, x) in values.iter().enumerate() {
         if !x.is_finite() || x.abs() >= MAX_INPUT_MAGNITUDE {
             let vector_index = if dim == 0 { 0 } else { i / dim };
@@ -166,6 +184,9 @@ impl TurboQuantIndex {
         }
         if dim == 0 || dim % 8 != 0 {
             return Err(ConstructError::DimNotPositiveMultipleOf8(dim));
+        }
+        if dim > MAX_DIM {
+            return Err(ConstructError::DimTooLarge { dim, max: MAX_DIM });
         }
 
         Ok(Self {
@@ -334,8 +355,15 @@ impl TurboQuantIndex {
             }
             Some(_) => {}
             None => {
-                if dim % 8 != 0 {
+                // `dim == 0` slips past the `% 8` check (0 % 8 == 0) but is a
+                // degenerate dim: committing it wedges the lazy index and the
+                // first `add` divides by zero (`vectors.len() / dim`). Reject
+                // it here, mirroring IdMapIndex::add_with_ids_2d.
+                if dim == 0 || dim % 8 != 0 {
                     return Err(AddError::DimNotMultipleOf8(dim));
+                }
+                if dim > MAX_DIM {
+                    return Err(AddError::DimTooLarge { dim, max: MAX_DIM });
                 }
                 // Don't commit dim until value validation passes — otherwise
                 // a lazy index is left with a committed dim and no vectors,
@@ -853,5 +881,70 @@ mod from_parts_tests {
         );
         assert_eq!(idx.dim(), 64);
         assert_eq!(idx.len(), 2);
+    }
+}
+
+#[cfg(all(test, target_arch = "x86_64"))]
+mod x86_scalar_fallback_tests {
+    //! Verify the x86 scalar fallback (score_query_into_heap, taken on
+    //! pre-AVX2 CPUs) returns the SAME top-k as the SIMD kernels on this
+    //! host. score_query_into_heap is not compiled on aarch64, so this is
+    //! the only place its full scoring path — including the issue-#106
+    //! perm0 de-interleave — runs end to end.
+    use super::TurboQuantIndex;
+    use crate::search::FORCE_SCALAR_FALLBACK;
+    use std::sync::atomic::Ordering;
+
+    fn unit_vectors(n: usize, dim: usize, seed: u64) -> Vec<f32> {
+        let mut s = seed.wrapping_add(0x9E3779B97F4A7C15);
+        let mut out = vec![0.0f32; n * dim];
+        for row in out.chunks_mut(dim) {
+            let mut norm = 0.0f64;
+            for x in row.iter_mut() {
+                s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                let v = ((s >> 33) as f64 / (1u64 << 31) as f64) - 1.0;
+                *x = v as f32;
+                norm += v * v;
+            }
+            let inv = 1.0 / (norm.sqrt() + 1e-9);
+            for x in row.iter_mut() {
+                *x = (*x as f64 * inv) as f32;
+            }
+        }
+        out
+    }
+
+    fn topk_sets(indices: &[i64], nq: usize, k: usize) -> Vec<std::collections::BTreeSet<i64>> {
+        (0..nq)
+            .map(|q| indices[q * k..(q + 1) * k].iter().copied().collect())
+            .collect()
+    }
+
+    #[test]
+    fn scalar_fallback_matches_simd_topk() {
+        let dim = 64;
+        let n = 600;
+        let nq = 12;
+        let k = 16;
+        for &bits in &[2usize, 3, 4] {
+            let mut idx = TurboQuantIndex::new(dim, bits).unwrap();
+            idx.add(&unit_vectors(n, dim, 11));
+            let queries = unit_vectors(nq, dim, 22);
+
+            FORCE_SCALAR_FALLBACK.store(false, Ordering::Relaxed);
+            let simd = idx.search(&queries, k);
+            FORCE_SCALAR_FALLBACK.store(true, Ordering::Relaxed);
+            let scalar = idx.search(&queries, k);
+            FORCE_SCALAR_FALLBACK.store(false, Ordering::Relaxed);
+
+            assert_eq!(simd.k, scalar.k, "bits={bits}: differing result width");
+            // Compare per-query top-k as sets (tie order between kernels may
+            // differ; membership must not).
+            assert_eq!(
+                topk_sets(&simd.indices, nq, simd.k),
+                topk_sets(&scalar.indices, nq, scalar.k),
+                "bits={bits}: scalar fallback returned a different top-k than SIMD",
+            );
+        }
     }
 }

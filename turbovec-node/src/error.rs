@@ -64,6 +64,14 @@ pub fn map_add_error(e: AddError) -> napi::Error<ErrCode> {
                  (must be finite and |value| < 1e16 to avoid f32 norm overflow)"
             ),
         ),
+        AddError::DimTooLarge { dim, max } => err(
+            "DIM_TOO_LARGE",
+            format!("dim {dim} exceeds maximum {max}"),
+        ),
+        // `AddError` is `#[non_exhaustive]`: map any future core variant to a
+        // stable generic code (with the core's own message) rather than failing
+        // to compile against a newer turbovec_core.
+        other => err("INVALID_ARGUMENT", other.to_string()),
     }
 }
 
@@ -79,6 +87,14 @@ pub fn map_construct_error(e: ConstructError) -> napi::Error<ErrCode> {
             "DIM_NOT_POSITIVE_MULTIPLE_OF_8",
             format!("dim must be a positive multiple of 8, got {dim}"),
         ),
+        ConstructError::DimTooLarge { dim, max } => err(
+            "DIM_TOO_LARGE",
+            format!("dim {dim} exceeds maximum {max}"),
+        ),
+        // `ConstructError` is `#[non_exhaustive]`: map any future core variant
+        // to a stable generic code rather than failing to compile against a
+        // newer turbovec_core.
+        other => err("INVALID_ARGUMENT", other.to_string()),
     }
 }
 

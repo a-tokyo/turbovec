@@ -15,6 +15,8 @@ from typing import Any, Callable, Iterable, Sequence
 
 import numpy as np
 
+from ._dedup import DuplicatePolicy, resolve_duplicates
+from ._persist import check_persisted_handles
 from ._turbovec import IdMapIndex
 
 try:
@@ -184,8 +186,8 @@ class TurboQuantVectorStore(VectorStore):
         # earlier vectors. The returned id list still mirrors the input
         # (one entry per input text), as the reference does.
         result_ids = ids
-        if len(set(ids)) != len(ids):
-            keep = sorted({id_: i for i, id_ in enumerate(ids)}.values())
+        keep = resolve_duplicates(ids, DuplicatePolicy.KEEP_LAST)
+        if len(keep) != len(ids):
             ids = [ids[i] for i in keep]
             texts_list = [texts_list[i] for i in keep]
             metadatas = [metadatas[i] for i in keep]
@@ -542,6 +544,7 @@ class TurboQuantVectorStore(VectorStore):
         # JSON object keys are strings; the str_to_u64 values are already
         # ints in the payload, just need to confirm.
         str_to_u64 = {sid: int(h) for sid, h in state["str_to_u64"].items()}
+        check_persisted_handles(index, str_to_u64.values(), what="document")
         return cls(
             embedding=embedding,
             index=index,

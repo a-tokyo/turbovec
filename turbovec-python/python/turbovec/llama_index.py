@@ -12,6 +12,8 @@ from typing import Any, List, Optional, Sequence
 
 import numpy as np
 
+from ._dedup import DuplicatePolicy, resolve_duplicates
+from ._persist import check_persisted_handles
 from ._turbovec import IdMapIndex
 
 try:
@@ -143,14 +145,16 @@ class TurboQuantVectorStore(BasePydanticVectorStore):
         # `query` later resolves through the duplicate node_id, returning
         # the second node's payload attached to the first node's vector.
         # Caller's job to deduplicate before calling add.
-        seen: set[str] = set()
-        for n in nodes:
-            if n.node_id in seen:
-                raise ValueError(
-                    f"duplicate node_id {n.node_id!r} appears multiple times "
-                    "in the input batch; deduplicate before calling add()"
-                )
-            seen.add(n.node_id)
+        node_ids = [n.node_id for n in nodes]
+        try:
+            resolve_duplicates(node_ids, DuplicatePolicy.REJECT)
+        except ValueError:
+            seen: set[str] = set()
+            dup = next(nid for nid in node_ids if nid in seen or seen.add(nid))
+            raise ValueError(
+                f"duplicate node_id {dup!r} appears multiple times "
+                "in the input batch; deduplicate before calling add()"
+            ) from None
 
         embeddings = [node.get_embedding() for node in nodes]
         vectors = np.asarray(embeddings, dtype=np.float32)
@@ -648,6 +652,7 @@ class TurboQuantVectorStore(BasePydanticVectorStore):
         store._node_id_to_u64 = {nid: int(h) for nid, h in state["node_id_to_u64"]}
         store._u64_to_node_id = {h: nid for nid, h in store._node_id_to_u64.items()}
         store._next_u64 = int(state["next_u64"])
+        check_persisted_handles(index, store._u64_to_node_id.keys(), what="node")
         return store
 
     @classmethod

@@ -281,7 +281,7 @@ fn tv_lazy_header_with_nonzero_n_errors_cleanly() {
     let err = load(&path).unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert!(
-        err.to_string().contains("n_vectors=0"),
+        err.to_string().contains("lazy"),
         "expected lazy n_vectors message, got: {err}",
     );
     std::fs::remove_file(&path).ok();

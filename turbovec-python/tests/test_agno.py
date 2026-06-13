@@ -1121,3 +1121,83 @@ def test_delete_by_metadata_returns_false_when_no_match():
     assert db.delete_by_metadata({"tag": "no-such-value"}) is False
     # Original doc still present.
     assert db.get_count() == 1
+
+
+# ---- Security/data-integrity regression (issue #104) ----------------------
+
+
+def test_duplicate_doc_id_keeps_both_vectors_no_orphan():
+    # agno's reference store (LanceDb) is append-only: two docs with the same
+    # explicit id (hence same derived doc_id) are BOTH stored. Previously the
+    # one-to-one _str_to_u64 map orphaned the first vector — counted and
+    # searchable but undeletable. Both must now be reachable and deletable.
+    db = TurboQuantVectorDb(embedder=StubEmbedder(DIM))
+    db.create()
+    db.insert("h", [_doc("alpha", doc_id="dup"), _doc("beta", doc_id="dup")])
+
+    assert db.get_count() == 2
+    [doc_id] = list(db._str_to_u64)            # both collapse to one derived id
+    assert len(db._str_to_u64[doc_id]) == 2    # ...mapping to both handles
+    assert len(db._u64_to_doc) == 2
+
+    # Deleting that id removes BOTH vectors, leaving no orphan behind.
+    assert db.delete_by_id(doc_id)
+    assert db.get_count() == 0
+    assert db._str_to_u64 == {}
+    assert db._u64_to_doc == {}
+
+
+def test_duplicate_doc_id_survives_persistence_roundtrip(tmp_path):
+    embedder = StubEmbedder(DIM)
+    db = TurboQuantVectorDb(embedder=embedder, path=str(tmp_path))
+    db.create()
+    db.insert("h", [_doc("alpha", doc_id="dup"), _doc("beta", doc_id="dup")])
+    db.save()
+
+    # Reload must rebuild the one-to-many id map, not drop a handle.
+    db2 = TurboQuantVectorDb(embedder=embedder, path=str(tmp_path))
+    db2.create()
+    assert db2.get_count() == 2
+    [doc_id] = list(db2._str_to_u64)
+    assert len(db2._str_to_u64[doc_id]) == 2
+
+
+def _doc_same_content(name=None, content_id=None, meta_data=None):
+    # All share identical content + no explicit id -> identical derived doc_id,
+    # differing only by name/content_id/metadata.
+    return _doc("identical", name=name, content_id=content_id, meta_data=meta_data)
+
+
+def test_delete_by_name_only_removes_matching_name_on_doc_id_collision():
+    # name is not part of the derived doc_id, so two differently-named docs
+    # with identical content collide. delete_by_name must remove only the
+    # named doc, not its id-twin, and must not leave a stale name entry.
+    db = TurboQuantVectorDb(embedder=StubEmbedder(DIM))
+    db.create()
+    db.insert("h", [_doc_same_content(name="A"), _doc_same_content(name="B")])
+    assert db.get_count() == 2
+
+    assert db.delete_by_name("A") is True
+    assert db.get_count() == 1
+    assert db.name_exists("A") is False  # no stale entry
+    assert db.name_exists("B") is True
+
+
+def test_delete_by_content_id_only_removes_matching_on_doc_id_collision():
+    db = TurboQuantVectorDb(embedder=StubEmbedder(DIM))
+    db.create()
+    db.insert("h", [_doc_same_content(content_id="c1"), _doc_same_content(content_id="c2")])
+    assert db.get_count() == 2
+
+    assert db.delete_by_content_id("c1") is True
+    assert db.get_count() == 1  # c2 survives
+
+
+def test_delete_by_metadata_only_removes_matching_on_doc_id_collision():
+    db = TurboQuantVectorDb(embedder=StubEmbedder(DIM))
+    db.create()
+    db.insert("h", [_doc_same_content(meta_data={"k": "x"}), _doc_same_content(meta_data={"k": "y"})])
+    assert db.get_count() == 2
+
+    assert db.delete_by_metadata({"k": "x"}) is True
+    assert db.get_count() == 1  # the {"k": "y"} doc survives

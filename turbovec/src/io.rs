@@ -26,23 +26,6 @@ use std::fs::File;
 use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::Path;
 
-/// Maximum permitted vector dimensionality.
-///
-/// The search engine materialises a `dim × dim` f64 rotation matrix, so an
-/// unbounded header dim is an unbounded allocation: a ~22-byte crafted file
-/// claiming `dim = 2^20` would pass the multiple-of-8 check and then abort
-/// the process on an 8 TiB rotation-matrix allocation at first
-/// prepare/search. 65 536 gives ~5× headroom over the largest real
-/// embedding dims in the wild (~12k) while bounding the rotation matrix
-/// to a survivable worst case.
-///
-/// Exported so the napi/PyO3 bindings can enforce this bound at the FFI
-/// boundary (constructor, `add`, and post-load validation) without
-/// hardcoding a copy that could silently drift. The core read layer does
-/// NOT enforce this limit; binding layers are responsible for rejecting
-/// loaded indices whose dim exceeds this value.
-pub const MAX_DIM: usize = 65_536;
-
 const TV_MAGIC: &[u8; 4] = b"TVPI";
 const TV_VERSION: u8 = 3;
 const TVIM_MAGIC: &[u8; 4] = b"TVIM";
@@ -177,15 +160,17 @@ pub fn load_id_map(
     let (bit_width, dim, n_vectors, packed_codes, scales, tqplus_shift, tqplus_scale) =
         read_core_versioned(&mut f, version[0], TVIM_VERSION, ".tvim")?;
 
-    // Do not pre-reserve `n_vectors` capacity: a crafted header could
-    // claim a huge count. `read_exact` will fail on a short file long
-    // before the Vec grows beyond the bytes actually present.
-    let mut slot_to_id = Vec::new();
-    let mut buf = [0u8; 8];
-    for _ in 0..n_vectors {
-        f.read_exact(&mut buf)?;
-        slot_to_id.push(u64::from_le_bytes(buf));
-    }
+    // Read the slot_to_id table via the capped reader rather than
+    // `Vec::with_capacity(n_vectors)` — `n_vectors` is attacker-controlled and
+    // pre-reserving it allows a tiny file to drive a huge allocation.
+    let id_bytes = n_vectors
+        .checked_mul(8)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "id table size overflows usize"))?;
+    let raw = read_exact_vec(&mut f, id_bytes)?;
+    let slot_to_id: Vec<u64> = raw
+        .chunks_exact(8)
+        .map(|b| u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
+        .collect();
 
     Ok((
         bit_width, dim, n_vectors, packed_codes, scales, tqplus_shift, tqplus_scale,
@@ -288,43 +273,49 @@ fn read_header_codes_scales<R: Read>(
     let dim = u32::from_le_bytes([header[1], header[2], header[3], header[4]]) as usize;
     let n_vectors = u32::from_le_bytes([header[5], header[6], header[7], header[8]]) as usize;
 
-    // Validate the header invariants that `from_parts` asserts on, here at
-    // the read layer (mirroring the magic / version / n_calib checks
-    // above). A malformed file must surface a catchable `InvalidData`
-    // error, never trip an assert that would panic across an FFI boundary.
-    if !matches!(bit_width, 2 | 3 | 4) {
+    // Validate header fields before allocating anything. The constructors
+    // (`new`/`add_2d`) enforce these invariants, but the load path bypasses
+    // them — so an untrusted file could otherwise smuggle a `bit_width` that
+    // divides-by-zero in `pack::repack` (0 or >8), a `bit_width` of 5..8 that
+    // silently passes `from_parts`'s length check and returns wrong scores,
+    // or a `dim` that isn't a multiple of 8 (the bit-plane layout is
+    // undefined for it and the size formulas diverge → panic). `dim == 0` is
+    // the lazy-index sentinel and is only valid alongside `n_vectors == 0`.
+    if !(2..=4).contains(&bit_width) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("invalid bit_width {bit_width}: must be 2, 3, or 4"),
         ));
     }
     if dim == 0 {
-        // Lazy/uncommitted index — a persisted lazy index has no vectors.
         if n_vectors != 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("invalid header: dim=0 (lazy) requires n_vectors=0, got {n_vectors}"),
+                format!("dim 0 (lazy sentinel) requires n_vectors 0, got {n_vectors}"),
             ));
         }
     } else if dim % 8 != 0 {
-        // Eager indices always store dim as a positive multiple of 8.
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("invalid dim {dim}: must be a multiple of 8"),
         ));
+    } else if dim > crate::MAX_DIM {
+        // Bound the lazily-built dim×dim rotation matrix: a tiny file can
+        // declare a huge dim and drive a multi-GB allocation on first search.
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid dim {dim}: exceeds maximum {}", crate::MAX_DIM),
+        ));
     }
 
-    // Guard the allocation size against integer overflow / pathological
-    // crafted headers (e.g. dim≈4e9, n_vectors≈4e9) so we error instead
-    // of wrapping or attempting a huge allocation.
+    // Checked arithmetic: `dim`/`n_vectors` are attacker-controlled u32s, so
+    // the product can overflow `usize` (on 32-bit targets this wrap would
+    // yield an undersized buffer and later out-of-bounds reads).
     let packed_bytes = (dim / 8)
         .checked_mul(bit_width)
         .and_then(|x| x.checked_mul(n_vectors))
         .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "invalid header: packed code length overflows usize",
-            )
+            io::Error::new(io::ErrorKind::InvalidData, "packed code size overflows usize")
         })?;
     let packed_codes = read_exact_vec(r, packed_bytes)?;
 
@@ -332,35 +323,28 @@ fn read_header_codes_scales<R: Read>(
     Ok((bit_width, dim, n_vectors, packed_codes, scales))
 }
 
-/// Read exactly `len` bytes into a fresh `Vec`, growing the buffer as
-/// bytes actually arrive rather than pre-allocating `len` up front. A
-/// crafted header can declare a `len` of many exabytes that still fits in
-/// `usize` (so a plain overflow check passes) — pre-allocating it would
-/// abort the process with an allocation failure. Reading incrementally
-/// caps memory at the bytes the file actually contains and surfaces a
-/// clean `UnexpectedEof` on a short/truncated file.
-fn read_exact_vec<R: Read>(r: &mut R, len: usize) -> io::Result<Vec<u8>> {
+/// Read exactly `n` bytes without pre-allocating `n` up front. A malicious
+/// header can declare a multi-gigabyte length from a tiny file; `read_to_end`
+/// on a `take`-limited reader grows the buffer only to the bytes actually
+/// present, so we never reserve the attacker's claimed size before confirming
+/// the data exists. The length check then rejects a truncated file cleanly.
+fn read_exact_vec<R: Read>(r: &mut R, n: usize) -> io::Result<Vec<u8>> {
     let mut buf = Vec::new();
-    let read = r.take(len as u64).read_to_end(&mut buf)?;
-    if read != len {
+    let read = r.take(n as u64).read_to_end(&mut buf)?;
+    if read != n {
         return Err(io::Error::new(
             io::ErrorKind::UnexpectedEof,
-            format!("expected {len} bytes, file ended after {read}"),
+            format!("truncated file: expected {n} bytes, got {read}"),
         ));
     }
     Ok(buf)
 }
 
 fn read_f32_array<R: Read>(r: &mut R, n: usize) -> io::Result<Vec<f32>> {
-    // Guard against overflow when sizing the byte buffer for crafted
-    // headers with a pathological element count.
-    let byte_len = n.checked_mul(4).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "invalid header: f32 array length overflows usize",
-        )
-    })?;
-    let bytes = read_exact_vec(r, byte_len)?;
+    let n_bytes = n
+        .checked_mul(4)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "f32 array size overflows usize"))?;
+    let bytes = read_exact_vec(r, n_bytes)?;
     Ok(bytes
         .chunks_exact(4)
         .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
