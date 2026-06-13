@@ -75,7 +75,8 @@ interface NodeStoreEntry {
  * Shape of the on-disk `nodestore.json`. `node_id_to_u64` is a list of
  * `[nodeId, handle]` pairs (JSON object keys must be strings; the list form
  * preserves type fidelity, matching Python). Handles are sequential u64 values
- * issued from 0, so they stay within the JS `Number` safe-integer range
+ * issued starting at 1 (`next_u64` holds the last-issued handle), so they stay
+ * within the JS `Number` safe-integer range
  * (< 2^53) for any realistic store — we serialize them as plain JSON numbers.
  * This is NOT a byte-compatible cross-runtime format (LlamaIndex.TS and Python
  * serialize BaseNodes differently); the schema *fields* and version are shared,
@@ -421,7 +422,13 @@ export class TurbovecVectorStore extends BaseVectorStore {
     if (filters !== undefined) {
       candidates = candidates.filter(([, entry]) => filtersMatch(entry.metadata, filters));
     }
-    return candidates.map(([nid]) => this.nodeIdToU64.get(nid)!);
+    // A consistent store has a handle for every node id; a corrupt side-car
+    // (node present, mapping missing) would otherwise leak `undefined` into the
+    // allowlist and throw an opaque TypeError when building the BigUint64Array.
+    // Drop unmapped candidates instead — same defensive stance as `query()`.
+    return candidates
+      .map(([nid]) => this.nodeIdToU64.get(nid))
+      .filter((h): h is bigint => h !== undefined);
   }
 
   // ---- Persistence --------------------------------------------------

@@ -189,7 +189,7 @@ This integration tracks the **installed `@llamaindex/core` (0.6.23) typed API**,
 - **Query mode:** only `VectorStoreQueryMode.DEFAULT` is supported; every other mode throws the typed `TurbovecQueryModeUnsupportedError`.
 - **No `clear()` / `toDict()` / `fromDict()`:** the JS store does not implement these Python-side helpers. Use `persist()` / `fromPersistDir()` for serialization.
 - **`nodestore.json` is not cross-loadable with Python.** The Node and Python side-cars are separate runtime formats: the Node file carries `bit_width` and a LlamaIndex.TS-serialized per-node `nodeDict`, whereas the Python file serializes nodes in its own format. The schema *fields* and version are conceptually aligned, but the files are not interchangeable across runtimes.
-- **Handles are JSON numbers.** Internal u64 handles are issued sequentially from 0 and serialized as plain JSON numbers, which stay within the JS safe-integer range — correct for stores of up to 2^53 nodes.
+- **Handles are JSON numbers.** Internal u64 handles are issued sequentially starting at 1 (`next_u64` holds the last-issued handle) and serialized as plain JSON numbers, which stay within the JS safe-integer range — correct for stores of up to 2^53 nodes.
 
 ## Known limitations
 

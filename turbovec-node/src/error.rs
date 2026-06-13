@@ -95,7 +95,7 @@ pub fn dim_required() -> napi::Error<ErrCode> {
 pub fn query_dim_mismatch(got: usize, expected: usize) -> napi::Error<ErrCode> {
     err(
         "QUERY_DIM_MISMATCH",
-        format!("query dim {got} does not match index dim {expected}"),
+        format!("query buffer length {got} is not a multiple of index dim {expected}"),
     )
 }
 

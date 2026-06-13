@@ -58,8 +58,9 @@ interface DocstoreEntry {
 /**
  * Shape of the on-disk `docstore.json`. Field-for-field with Python's writer.
  * `str_to_u64` values and `next_u64` are serialized as plain JSON numbers (as
- * Python does). Handles are sequential u64 values issued from 0, so they stay
- * within the JS `Number` safe-integer range (< 2^53) for any real store; we
+ * Python does). Handles are sequential u64 values issued starting at 1
+ * (`next_u64` holds the last-issued handle), so they stay within the JS
+ * `Number` safe-integer range (< 2^53) for any real store; we
  * deliberately keep numbers rather than strings to preserve Python on-disk
  * compatibility.
  */

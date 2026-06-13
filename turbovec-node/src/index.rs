@@ -162,11 +162,10 @@ impl TurboQuantIndex {
             match self.inner.dim_opt() {
                 Some(dim) => {
                     if !q_slice.len().is_multiple_of(dim) {
-                        // Report the raw buffer length as "got" so the message
-                        // reads "query buffer length X is not a multiple of
-                        // index dim Y".  The helper message already says
-                        // "query dim {got} does not match index dim {expected}",
-                        // which is clear enough for the non-multiple case.
+                        // Report the raw buffer length as "got" — the only
+                        // failure mode here is a buffer that isn't a multiple
+                        // of the index dim, which the helper message states
+                        // directly.
                         return Err(query_dim_mismatch(q_slice.len(), dim));
                     }
                     q_slice.len() / dim

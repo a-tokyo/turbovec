@@ -166,7 +166,7 @@ Writes two files under the given directory:
 - `index.tvim` — the binary `IdMapIndex` payload.
 - `docstore.json` — JSON-encoded document text, metadata, and id maps.
 
-The `docstore.json` schema **matches the Python writer's format** (same `schema_version` and field names: `schema_version`, `docs`, `str_to_u64`, `next_u64`, `bit_width`), so a store dumped from Python can be loaded in Node and vice-versa. The `str_to_u64` and `next_u64` handle values are written as plain JSON numbers (as Python does); handles are sequential `u64` values issued from 0, so they stay safely within the JS `Number` / `2^53` integer range for any real-world store. The loader refuses to deserialize an unknown `schema_version`. Document metadata must be JSON-serializable.
+The `docstore.json` schema **matches the Python writer's format** (same `schema_version` and field names: `schema_version`, `docs`, `str_to_u64`, `next_u64`, `bit_width`), so a store dumped from Python can be loaded in Node and vice-versa. The `str_to_u64` and `next_u64` handle values are written as plain JSON numbers (as Python does); handles are sequential `u64` values issued starting at 1 (`next_u64` holds the last-issued handle), so they stay safely within the JS `Number` / `2^53` integer range for any real-world store. The loader refuses to deserialize an unknown `schema_version`. Document metadata must be JSON-serializable.
 
 ## Known limitations
 
