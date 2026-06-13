@@ -7,11 +7,11 @@
 # So merging a version bump to main is the ONLY trigger that actually publishes.
 #
 # Publishing is gated on a real (non-0.0.0) version; the owner bumps
-# turbovec-node to e.g. 0.1.0 (root + the four npm/<target>/package.json +
+# turbovec-node to e.g. 0.1.0 (root + the five npm/<target>/package.json +
 # optionalDependencies, e.g. via `napi version`) to cut the first release.
 #
 # Architecture:
-#   1. Four parallel build jobs (native runners) compile a .node per platform.
+#   1. Five parallel build jobs (native runners) compile a .node per platform.
 #      Linux targets set TURBOVEC_STATIC_BLAS=1 so the .node bundles OpenBLAS
 #      statically — no libopenblas.so required on end-user Linux boxes.
 #   2. A single `release` job (main-ref-gated) runs the canonical napi-rs v3
@@ -27,7 +27,7 @@
 #        d. a single root `npm publish` does everything else (official napi-rs
 #           template pattern): `prepack` builds dist/, then the `prepublishOnly`
 #           hook (`napi prepublish -t npm`) stamps all platform-package versions
-#           + the root optionalDependencies and publishes the four platform
+#           + the root optionalDependencies and publishes the five platform
 #           packages, then npm publishes the root. This is the ONLY publish call
 #           — there is NO manual `npm publish npm/*/` loop, hence no
 #           double-publish. GITHUB_TOKEN is intentionally absent from that step
@@ -220,6 +220,48 @@ jobs:
           name: node-darwin-arm64
           path: turbovec-node/*.node
 
+  build-macos-x64:
+    name: Build darwin-x64
+    # macos-13 is the Intel (x86_64) runner; macos-14 above is Apple Silicon.
+    runs-on: macos-13
+    defaults:
+      run:
+        working-directory: turbovec-node
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      # macOS: build.rs emits -framework Accelerate automatically; no BLAS env needed.
+      - name: Build .node
+        run: npx napi build --platform --release
+
+      - name: Smoke test (require)
+        run: |
+          node -e "
+            const fs = require('fs');
+            const nodeFile = fs.readdirSync('.').find(f => f.endsWith('.node'));
+            console.log('Loading:', nodeFile);
+            const t = require('./' + nodeFile);
+            const i = new t.TurboQuantIndex(8, 4);
+            i.add(new Float32Array(16).fill(0.1), 8);
+            const r = i.search(new Float32Array(8).fill(0.1), 2);
+            console.log('search ok nq=', r.nq, 'k=', r.k);
+            console.log('SMOKE OK');
+          "
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: node-darwin-x64
+          path: turbovec-node/*.node
+
   build-windows-x64:
     name: Build win32-x64
     runs-on: windows-latest
@@ -268,7 +310,7 @@ jobs:
   release:
     name: GitHub Release + npm publish
     runs-on: ubuntu-latest
-    needs: [build-linux-x64, build-linux-arm64, build-macos-arm64, build-windows-x64]
+    needs: [build-linux-x64, build-linux-arm64, build-macos-arm64, build-macos-x64, build-windows-x64]
     # Gate on main ref only — workflow_dispatch from a non-main branch runs
     # the build jobs above (for manual testing) but must NOT publish.
     if: github.ref == 'refs/heads/main'
@@ -337,13 +379,13 @@ jobs:
           merge-multiple: true
 
       # Fail fast if any platform artifact is missing before we attempt publish.
-      - name: Assert all 4 platform artifacts present
+      - name: Assert all 5 platform artifacts present
         if: steps.check.outputs.publish == 'true'
         working-directory: turbovec-node
         shell: bash
         run: |
           COUNT=$(find artifacts -name '*.node' | wc -l)
-          test "$COUNT" -eq 4 || { echo "::error::expected 4 .node artifacts, found $COUNT"; exit 1; }
+          test "$COUNT" -eq 5 || { echo "::error::expected 5 .node artifacts, found $COUNT"; exit 1; }
           echo "Found $COUNT .node artifacts — proceeding"
 
       # Copy each .node from artifacts/ into its npm/<target>/ dir (and to the
@@ -374,7 +416,7 @@ jobs:
       #      builds — without it the tarball ships a dead subpath).
       #   2. `prepublishOnly` → `napi prepublish -t npm` stamps every platform
       #      package.json version + the root optionalDependencies to the root
-      #      version, then `npm publish`-es the four npm/<target>/ platform
+      #      version, then `npm publish`-es the five npm/<target>/ platform
       #      packages (whose .node files were copied in by `napi artifacts`
       #      above).
       #   3. npm publishes the root package.

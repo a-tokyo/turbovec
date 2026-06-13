@@ -91,7 +91,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-14, windows-latest]
+        # macos-14 = Apple Silicon (arm64); macos-13 = Intel (x86_64).
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-14, macos-13, windows-latest]
     defaults:
       run:
         working-directory: turbovec-node

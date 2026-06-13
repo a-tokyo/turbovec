@@ -32,16 +32,17 @@ Prebuilt binaries ship for linux x64/arm64 (gnu), macOS arm64, and Windows x64; 
 
 ### Supported platforms
 
-Prebuilt native binaries are published for exactly four targets:
+Prebuilt native binaries are published for exactly five targets:
 
 | Platform                    | Target triple               |
 | --------------------------- | --------------------------- |
 | Linux x64 (glibc)           | `x86_64-unknown-linux-gnu`  |
 | Linux arm64 (glibc)         | `aarch64-unknown-linux-gnu` |
 | macOS arm64 (Apple Silicon) | `aarch64-apple-darwin`      |
+| macOS x64 (Intel)           | `x86_64-apple-darwin`       |
 | Windows x64                 | `x86_64-pc-windows-msvc`    |
 
-There is **no source-build fallback**. Unlike the Python package (which publishes an sdist that compiles from source), this Node addon has no compile-on-install path: on any platform without a prebuilt binary — Intel macOS (`x86_64-apple-darwin`), Windows arm64 (`win32-arm64`), or musl-based Linux such as Alpine — install resolves no matching `optionalDependencies` package and the loader throws a clear "native binding not found" error at `require`/`import` time. Use one of the four targets above (e.g. a glibc-based image rather than Alpine in containers).
+There is **no source-build fallback**. Unlike the Python package (which publishes an sdist that compiles from source), this Node addon has no compile-on-install path: on any platform without a prebuilt binary — Windows arm64 (`win32-arm64`) or musl-based Linux such as Alpine — install resolves no matching `optionalDependencies` package and the loader throws a clear "native binding not found" error at `require`/`import` time. Use one of the five targets above (e.g. a glibc-based image rather than Alpine in containers).
 
 ## Quickstart — `TurboQuantIndex`
 
