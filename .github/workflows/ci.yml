@@ -84,3 +84,160 @@ jobs:
       - name: Run pytest
         shell: bash
         run: pytest turbovec-python/tests/ -v
+
+  node:
+    name: Node (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # macos-14 = Apple Silicon (arm64); macos-15-intel = Intel (x86_64).
+        # (macos-13 — the previous Intel image — was retired by GitHub on
+        # 2025-12-04; macos-15-intel is its replacement label.)
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-14, macos-15-intel, windows-latest]
+    defaults:
+      run:
+        working-directory: turbovec-node
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Linux: install static OpenBLAS + Fortran runtime so the .node is
+      # self-contained (no system libopenblas dependency on end-user machines).
+      - name: Install OpenBLAS + gfortran (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libopenblas-dev libopenblas-pthread-dev gfortran
+
+      - name: Install dependencies
+        run: npm ci
+
+      # On Linux: static BLAS via env vars discovered in Docker verification.
+      # On macOS: Accelerate framework (no extra env needed — build.rs handles it).
+      # On Windows: pure-Rust matrixmultiply fallback (no BLAS env needed).
+      - name: Build native addon (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          # Robust discovery: find libopenblas*.a under /usr/lib regardless of
+          # arch suffix or sub-directory (works on x86_64 and aarch64 Debian/Ubuntu).
+          # SC2155: declare and assign separately to avoid masking return values.
+          OPENBLAS_A=$(find /usr/lib -name 'libopenblas*.a' 2>/dev/null | head -1)
+          test -n "$OPENBLAS_A" || { echo "::error::libopenblas.a not found"; exit 1; }
+          OPENBLAS_LIB_DIR=$(dirname "$OPENBLAS_A")
+          export OPENBLAS_LIB_DIR
+          echo "OPENBLAS_LIB_DIR=$OPENBLAS_LIB_DIR" >> "$GITHUB_ENV"
+          echo "OPENBLAS_LIB_DIR=$OPENBLAS_LIB_DIR"
+          export TURBOVEC_STATIC_BLAS=1
+          npx napi build --platform --release
+
+      - name: Build native addon (macOS / Windows)
+        if: runner.os != 'Linux'
+        run: npx napi build --platform --release
+
+      # Lint + format gate. Run once (ubuntu-latest only) — eslint/prettier
+      # results are OS-independent, so running on every matrix OS is redundant.
+      - name: Lint + format check (Linux)
+        if: runner.os == 'Linux' && matrix.os == 'ubuntu-latest'
+        run: |
+          npm run lint
+          npm run format:check
+
+      - name: TypeScript type-check
+        run: npm run typecheck
+
+      # On Linux: assert the .node has NO dynamic math library dependencies.
+      # A dynamic dep means static linking silently fell back, which would
+      # cause load failures on stock end-user Linux boxes.
+      - name: Assert no dynamic math libs (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          # SC2012/SC2035: use find + ./ prefix to handle dashes in filenames.
+          NODE_FILE=$(find . -maxdepth 1 -name "*.node" | head -1)
+          echo "Checking: $NODE_FILE"
+          ldd "$NODE_FILE"
+          ldd "$NODE_FILE" | grep -iE 'openblas|gfortran|gomp|quadmath' && { echo "::error::dynamic math dependency"; exit 1; } || echo "ok: self-contained"
+
+      - name: Run vitest
+        run: npx vitest run
+
+      # Coverage with enforced thresholds. Run once on ubuntu-latest only —
+      # results are OS-independent. @vitest/coverage-v8 is a devDependency
+      # already installed by `npm ci` above. Threshold failure fails the job.
+      - name: Coverage with thresholds (Linux)
+        if: runner.os == 'Linux' && matrix.os == 'ubuntu-latest'
+        run: npm run test:coverage
+
+      # Guard against the dead-subpath defect: the published root package's
+      # exports["./langchain"] points at dist/, which is gitignored and only
+      # produced by `build:ts`. Build dist/ and assert `npm pack` actually ships
+      # the dual ESM/CJS outputs. tsup emits ESM as .mjs (and types .d.mts) and
+      # CJS as .cjs (types .d.ts) — so ESM consumers avoid the
+      # MODULE_TYPELESS_PACKAGE_JSON warning (the package has no "type":"module").
+      # One OS is enough — keep it on Linux.
+      - name: Assert integration subpaths ship in the tarball (Linux)
+        if: runner.os == 'Linux' && matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf dist /tmp/tvfiles
+          mkdir -p /tmp/tvfiles
+          npm run build:ts
+          # Pack for real to a dir and read the tarball's own entry list with
+          # `tar`, rather than parsing `npm pack --json` stdout — lifecycle
+          # script output (prepack, etc.) can contaminate that stream. tar
+          # entries are prefixed `package/`; strip it to compare against the
+          # files-field paths. --ignore-scripts: dist/ is already built above.
+          npm pack --pack-destination /tmp/tvfiles --ignore-scripts >/dev/null
+          TARBALL=$(ls /tmp/tvfiles/*.tgz)
+          FILES=$(tar -tzf "$TARBALL" | sed 's#^package/##')
+          echo "$FILES"
+          for f in \
+            dist/langchain.mjs dist/langchain.cjs dist/langchain.d.ts dist/langchain.d.mts \
+            dist/llamaindex.mjs dist/llamaindex.cjs dist/llamaindex.d.ts dist/llamaindex.d.mts; do
+            echo "$FILES" | grep -qx "$f" || { echo "::error::missing $f in npm pack tarball"; exit 1; }
+          done
+          rm -rf /tmp/tvfiles
+          echo "ok: dist/{langchain,llamaindex}.{mjs,cjs,d.ts,d.mts} present in tarball"
+
+      # Exercise the PUBLISHED package shape end-to-end — the blind spot that let
+      # the binary-less platform-package bug ship. pack the root, install the
+      # tarball into a clean dir (WITHOUT the unpublished platform
+      # optionalDependency), drop the locally-built .node into the installed
+      # package (mirroring what the platform optionalDependency would provide),
+      # install the optional peers (so the integration modules' eager
+      # @langchain/core + @llamaindex/core imports resolve), then require/import
+      # every exports subpath. Fails on any dead subpath (MODULE_NOT_FOUND) or
+      # the ESM MODULE_TYPELESS_PACKAGE_JSON warning.
+      - name: Smoke-test published package shape (Linux)
+        if: runner.os == 'Linux' && matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf dist /tmp/tvpack
+          mkdir -p /tmp/tvpack
+          npm run build:ts
+          # Pack to a dir and resolve the tarball with `ls`, rather than parsing
+          # `npm pack --json` stdout — lifecycle script output can contaminate
+          # that stream. --ignore-scripts: dist/ already built above.
+          npm pack --pack-destination /tmp/tvpack --ignore-scripts >/dev/null
+          TARBALL=$(ls /tmp/tvpack/*.tgz)
+          CONSUMER=/tmp/tvpack/consumer
+          mkdir -p "$CONSUMER"
+          ( cd "$CONSUMER" && npm init -y >/dev/null \
+            && npm install "$TARBALL" @langchain/core @llamaindex/core >/dev/null )
+          # Make the native binding resolvable (no published platform dep yet).
+          cp ./*.node "$CONSUMER/node_modules/turbovec/"
+          ( cd "$CONSUMER" && node -e "require('turbovec'); require('turbovec/langchain'); require('turbovec/llamaindex'); console.log('CJS subpaths resolve')" )
+          # ESM: capture stderr too and fail on the typeless-package warning.
+          ESM_OUT=$( cd "$CONSUMER" && node --input-type=module \
+            -e "await import('turbovec/langchain'); await import('turbovec/llamaindex'); console.log('ESM subpaths resolve')" 2>&1 )
+          echo "$ESM_OUT"
+          echo "$ESM_OUT" | grep -q 'ESM subpaths resolve' || { echo "::error::ESM subpath failed to resolve"; exit 1; }
+          echo "$ESM_OUT" | grep -qi 'MODULE_TYPELESS_PACKAGE_JSON' && { echo "::error::ESM emitted MODULE_TYPELESS_PACKAGE_JSON warning"; exit 1; } || true
+          rm -rf /tmp/tvpack

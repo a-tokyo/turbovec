@@ -1,0 +1,27 @@
+{
+  "name": "turbovec-linux-x64-gnu",
+  "version": "0.0.0",
+  "cpu": [
+    "x64"
+  ],
+  "main": "turbovec.linux-x64-gnu.node",
+  "files": [
+    "turbovec.linux-x64-gnu.node",
+    "LICENSE"
+  ],
+  "description": "Fast vector quantization with 2-4 bit compression and SIMD search — Node.js native addon",
+  "license": "MIT",
+  "engines": {
+    "node": ">= 20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RyanCodrai/turbovec"
+  },
+  "os": [
+    "linux"
+  ],
+  "libc": [
+    "glibc"
+  ]
+}

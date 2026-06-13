@@ -38,3 +38,62 @@ See the [Building](README.md#building) and [Running benchmarks](README.md#runnin
 ```bash
 pip install -e ".[langchain,llama-index,haystack,agno]"
 ```
+
+### Node.js bindings (turbovec-node)
+
+The Node.js package lives in `turbovec-node/` and wraps the same Rust core
+via [napi-rs](https://napi.rs/). Node 20+ is required.
+
+Build the native addon and the bundled integration entry points:
+
+```bash
+cd turbovec-node
+npm install
+npx napi build --platform --release   # compiles the platform-specific .node addon
+npm run build:ts                       # bundles the turbovec/langchain + turbovec/llamaindex subpaths
+```
+
+Run the test suite (the `pretest` hook rebuilds the addon and the TS bundle
+first, so `npm test` is self-contained):
+
+```bash
+npm test
+```
+
+Typecheck, lint, and format:
+
+```bash
+npx tsc --noEmit       # typecheck
+npx eslint .           # lint
+npx prettier --check . # format check (use `npx prettier --write .` to fix)
+```
+
+Run the test suite with coverage (thresholds enforced):
+
+```bash
+npm run test:coverage
+```
+
+Coverage is instrumented with `@vitest/coverage-v8` scoped to `ts/**` only
+(the napi-generated loader and `dist/` are excluded). Enforced thresholds:
+
+| Metric     | Threshold | Measured baseline |
+|------------|-----------|-------------------|
+| Statements | 90%       | 94.43%            |
+| Branches   | 80%       | 86.61%            |
+| Functions  | 90%       | 95.23%            |
+| Lines      | 90%       | 94.43%            |
+
+Raise the thresholds in `vitest.config.ts` when coverage genuinely improves.
+
+These checks (format, lint, typecheck, tests, coverage) are enforced in CI on
+every pull request; run them locally before pushing.
+
+The `@langchain/core` and `@llamaindex/core` integration peers are installed
+as dev dependencies, so their test suites run out of the box after
+`npm install` — no extras step needed. They are *optional* peer dependencies
+at publish time, so end users only install the one(s) they use.
+
+When changing the Rust core in a way that affects the Node bindings, run the
+clippy check scoped to the bindings crate (`cargo clippy -p turbovec-node`)
+alongside the workspace build.

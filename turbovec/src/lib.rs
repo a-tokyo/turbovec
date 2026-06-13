@@ -77,7 +77,11 @@ const FLUSH_EVERY: usize = 256;
 /// reasonable dim (sqrt(f32::MAX / dim) for dim=2^16 is ~7e16; this
 /// bound leaves a 7x safety margin and is still ~16 orders of
 /// magnitude above any realistic embedding value).
-const MAX_INPUT_MAGNITUDE: f32 = 1e16;
+///
+/// Exposed publicly so the napi/PyO3 bindings can reuse it as their
+/// input-validation threshold (rejecting before the FFI crossing) instead of
+/// hardcoding a copy that could silently drift from this value.
+pub const MAX_INPUT_MAGNITUDE: f32 = 1e16;
 
 /// Reject non-finite (NaN, +Inf, -Inf) or extremely-large input values.
 /// Returns the first offending vector/coord/value tuple, or `None` if

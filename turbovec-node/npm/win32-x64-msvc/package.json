@@ -1,0 +1,24 @@
+{
+  "name": "turbovec-win32-x64-msvc",
+  "version": "0.0.0",
+  "cpu": [
+    "x64"
+  ],
+  "main": "turbovec.win32-x64-msvc.node",
+  "files": [
+    "turbovec.win32-x64-msvc.node",
+    "LICENSE"
+  ],
+  "description": "Fast vector quantization with 2-4 bit compression and SIMD search — Node.js native addon",
+  "license": "MIT",
+  "engines": {
+    "node": ">= 20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RyanCodrai/turbovec"
+  },
+  "os": [
+    "win32"
+  ]
+}

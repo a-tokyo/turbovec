@@ -1,0 +1,12 @@
+*.node
+target/
+node_modules/
+dist/
+# vitest --coverage output
+coverage/
+.gates.md
+*.tgz
+# Platform package binaries that land here during CI pre-publish steps
+npm/**/*.node
+# npm pack tarballs (from npm pack or napi pre-publish dry runs)
+# *.tgz already covered above

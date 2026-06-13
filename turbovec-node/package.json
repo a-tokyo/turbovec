@@ -1,0 +1,122 @@
+{
+  "name": "turbovec",
+  "version": "0.0.0",
+  "description": "Fast vector quantization with 2-4 bit compression and SIMD search — Node.js native addon",
+  "author": {
+    "name": "Ahmed Tokyo",
+    "email": "tokyo@ahmedtokyo.com",
+    "url": "https://www.ahmedtokyo.com"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RyanCodrai/turbovec"
+  },
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./langchain": {
+      "import": {
+        "types": "./dist/langchain.d.mts",
+        "default": "./dist/langchain.mjs"
+      },
+      "require": {
+        "types": "./dist/langchain.d.ts",
+        "default": "./dist/langchain.cjs"
+      }
+    },
+    "./llamaindex": {
+      "import": {
+        "types": "./dist/llamaindex.d.mts",
+        "default": "./dist/llamaindex.mjs"
+      },
+      "require": {
+        "types": "./dist/llamaindex.d.ts",
+        "default": "./dist/llamaindex.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "engines": {
+    "node": ">= 20"
+  },
+  "typesVersions": {
+    "*": {
+      "langchain": [
+        "./dist/langchain.d.ts"
+      ],
+      "llamaindex": [
+        "./dist/llamaindex.d.ts"
+      ]
+    }
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "napi": {
+    "binaryName": "turbovec",
+    "targets": [
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+      "aarch64-apple-darwin",
+      "x86_64-apple-darwin",
+      "x86_64-pc-windows-msvc"
+    ]
+  },
+  "scripts": {
+    "build": "napi build --platform --release",
+    "build:ts": "tsup",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "pretest": "npm run build && npm run build:ts",
+    "test": "vitest run",
+    "pretest:coverage": "npm run pretest",
+    "test:coverage": "vitest run --coverage",
+    "prepack": "npm run build:ts",
+    "prepublishOnly": "napi prepublish -t npm"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@langchain/core": "^1.1.48",
+    "@llamaindex/core": "^0.6.23",
+    "@napi-rs/cli": "^3",
+    "@types/node": "^22.19.21",
+    "@vitest/coverage-v8": "2.1.9",
+    "eslint": "^10.4.1",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.8.4",
+    "tsup": "^8.5.1",
+    "typescript": "^5",
+    "typescript-eslint": "^8.61.0",
+    "vitest": "2.1.9"
+  },
+  "peerDependencies": {
+    "@langchain/core": ">=1 <2",
+    "@llamaindex/core": ">=0.6.23 <1"
+  },
+  "peerDependenciesMeta": {
+    "@langchain/core": {
+      "optional": true
+    },
+    "@llamaindex/core": {
+      "optional": true
+    }
+  },
+  "optionalDependencies": {
+    "turbovec-darwin-arm64": "0.0.0",
+    "turbovec-darwin-x64": "0.0.0",
+    "turbovec-linux-arm64-gnu": "0.0.0",
+    "turbovec-linux-x64-gnu": "0.0.0",
+    "turbovec-win32-x64-msvc": "0.0.0"
+  }
+}

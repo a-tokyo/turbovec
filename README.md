@@ -120,6 +120,51 @@ index.write("index.tvim").unwrap();
 let loaded = IdMapIndex::load("index.tvim").unwrap();
 ```
 
+## JavaScript / Node.js
+
+```bash
+npm install turbovec
+```
+
+Native addon (via [napi-rs](https://napi.rs/)) with prebuilt binaries for linux x64/arm64 (gnu), macOS arm64 + x64 (Intel), and Windows x64. Vectors are flat row-major `Float32Array`s; ids are `bigint` (`BigUint64Array`).
+
+```js
+const { TurboQuantIndex } = require('turbovec');
+
+const index = new TurboQuantIndex(1536, 4);
+index.add(vectors);                          // flat Float32Array, length n*dim
+
+const { scores, indices, nq, k } = index.search(query, 10);
+// indices is a BigInt64Array of slot positions; row i = indices.slice(i*k, (i+1)*k)
+
+index.write('index.tv');
+const loaded = TurboQuantIndex.load('index.tv');
+```
+
+Need stable ids that survive deletes? Use `IdMapIndex`:
+
+```js
+const { IdMapIndex } = require('turbovec');
+
+const index = new IdMapIndex(1536, 4);
+index.addWithIds(vectors, BigUint64Array.from([1001n, 1002n, 1003n]));
+
+const { scores, ids } = index.search(query, 10);  // ids are your u64 external ids (bigint)
+index.remove(1002n);                               // O(1) by id
+
+index.write('index.tvim');
+const loaded = IdMapIndex.load('index.tvim');
+```
+
+The x64 binaries target the `x86-64-v3` baseline (AVX2, Haswell 2013+); the AVX-512 kernel is gated at runtime. Linux binaries statically link BLAS, so they have no system-library prerequisites. See [`docs/api.md`](docs/api.md) for the full JS reference (flat-buffer layout, result shapes, lazy-dim rules, and the `err.code` table).
+
+### Framework integrations (JS)
+
+Drop-in vector stores mirroring each framework's in-tree reference store. The framework core is an optional peer dependency.
+
+- [LangChain.js](docs/integrations/langchain_js.md) — `npm install turbovec @langchain/core` · `import { TurbovecVectorStore } from 'turbovec/langchain'`
+- [LlamaIndex.TS](docs/integrations/llamaindex_ts.md) — `npm install turbovec @llamaindex/core` · `import { TurbovecVectorStore } from 'turbovec/llamaindex'`
+
 ## Recall
 
 TurboQuant vs FAISS `IndexPQ` (LUT256, nbits=8) — the paper's Section 4.4 baseline. 100K vectors, k=64. FAISS PQ sub-quantizer counts sized to match TurboQuant's bit rate (m=d/4 at 2-bit, m=d/2 at 4-bit).
@@ -199,7 +244,18 @@ pip install target/wheels/*.whl
 cargo build --release
 ```
 
-All x86_64 builds target `x86-64-v3` (AVX2 baseline, Haswell 2013+) via `.cargo/config.toml`. Any CPU that can run the AVX2 fallback kernel can run the whole crate — the AVX-512 kernel is gated at runtime via `is_x86_feature_detected!` and only kicks in on hardware that supports it.
+All x86_64 builds target `x86-64-v3` (AVX2 baseline, Haswell 2013+) via `.cargo/config.toml`. Any CPU that can run the AVX2 fallback kernel can run the whole crate — the AVX-512 kernel is gated at runtime via `is_x86_feature_detected!` and only kicks in on hardware that supports it. The same baseline applies to the published x64 Node.js and Python binaries.
+
+### Node.js (via napi-rs)
+
+```bash
+cd turbovec-node
+npm install
+npx napi build --platform --release   # builds the native .node addon
+npm run build:ts                       # bundles the integration subpath exports
+```
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md#nodejs-bindings-turbovec-node) for the full test/lint workflow.
 
 ## Running benchmarks
 
